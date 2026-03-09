@@ -25,6 +25,9 @@ A small Typer CLI to submit ComfyUI API prompts, poll async completion, and down
 
 - Python + [`uv`](https://docs.astral.sh/uv/)
 - ComfyUI server reachable from this machine
+- A ComfyUI build with required nodes/models installed and running at `server_url`, such as:
+  - [`michaelgold/comfy3d`](https://github.com/michaelgold/comfy3d), or
+  - another ComfyUI setup that includes **qwen-image-2512** and **Trellis2**
 
 ---
 
