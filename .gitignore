@@ -1,0 +1,6 @@
+.venv/
+downloads/
+.python-version
+__pycache__/
+*.pyc
+config.json
