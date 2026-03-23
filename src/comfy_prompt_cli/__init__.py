@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 import uuid
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,11 @@ from pydantic import BaseModel, HttpUrl, ValidationError
 
 app = typer.Typer(help="Send prompts to a ComfyUI server.")
 CONFIG_PATH = Path("config.json")
+DEFAULT_TEXT_TO_IMAGE_WORKFLOW = Path("examples/qwen_image_2512.json")
+DEFAULT_IMAGE_TEXT_TO_IMAGE_WORKFLOW = Path("examples/qwen_image_edit_2511.json")
+DEFAULT_IMAGE_TO_GLB_WORKFLOW = Path("examples/img_to_trellis2.json")
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+GLB_EXTENSIONS = {".glb"}
 
 
 class AppConfig(BaseModel):
@@ -53,6 +59,21 @@ def _extract_prompt_payload(data: dict[str, Any]) -> dict[str, Any]:
     raise typer.BadParameter("Prompt JSON must be an object.")
 
 
+def _load_prompt_from_file(prompt_file: Path) -> dict[str, Any]:
+    if not prompt_file.exists():
+        raise typer.BadParameter(f"Prompt file not found: {prompt_file}")
+
+    try:
+        data = json.loads(prompt_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise typer.BadParameter(f"Invalid JSON in {prompt_file}: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise typer.BadParameter("Prompt JSON root must be an object.")
+
+    return _extract_prompt_payload(data)
+
+
 def _find_node_by_class(prompt: dict[str, Any], class_type: str) -> tuple[str, dict[str, Any]] | None:
     for node_id, node in prompt.items():
         if isinstance(node, dict) and node.get("class_type") == class_type:
@@ -68,6 +89,25 @@ def _set_input_if_node(node: dict[str, Any], key: str, value: Any) -> bool:
     return False
 
 
+def _set_input_on_first_node_by_class(prompt: dict[str, Any], class_type: str, key: str, value: Any) -> str | None:
+    found = _find_node_by_class(prompt, class_type)
+    if not found:
+        return None
+    if not _set_input_if_node(found[1], key, value):
+        return None
+    return found[0]
+
+
+def _replace_all_load_image_inputs(prompt: dict[str, Any], image_name: str) -> list[str]:
+    updated_nodes: list[str] = []
+    for node_id, node in prompt.items():
+        if not isinstance(node, dict) or node.get("class_type") != "LoadImage":
+            continue
+        if _set_input_if_node(node, "image", image_name):
+            updated_nodes.append(str(node_id))
+    return updated_nodes
+
+
 def _apply_overrides(
     prompt: dict[str, Any],
     positive_prompt: str | None,
@@ -81,17 +121,39 @@ def _apply_overrides(
     if positive_prompt is not None:
         updated = 0
         for node_id, node in prompt.items():
-            if not isinstance(node, dict) or node.get("class_type") != "CLIPTextEncode":
+            if not isinstance(node, dict):
                 continue
+
+            class_type = node.get("class_type")
+            if class_type not in {"CLIPTextEncode", "TextEncodeQwenImageEditPlus"}:
+                continue
+
             meta = node.get("_meta", {}) if isinstance(node.get("_meta"), dict) else {}
             title = str(meta.get("title", "")).lower()
             inputs = node.get("inputs", {}) if isinstance(node.get("inputs"), dict) else {}
-            if "positive" in title or ("text" in inputs and str(inputs.get("text", "")).strip()):
-                inputs["text"] = positive_prompt
+
+            if "negative" in title:
+                continue
+
+            if class_type == "CLIPTextEncode":
+                if "text" not in inputs:
+                    continue
+                if "positive" in title or str(inputs.get("text", "")).strip():
+                    inputs["text"] = positive_prompt
+                    updated += 1
+                    changes.append(f"prompt -> node {node_id}")
+                continue
+
+            if "prompt" not in inputs:
+                continue
+            if "positive" in title or str(inputs.get("prompt", "")).strip():
+                inputs["prompt"] = positive_prompt
                 updated += 1
                 changes.append(f"prompt -> node {node_id}")
         if updated == 0:
-            raise typer.BadParameter("Could not find a positive CLIPTextEncode node to override prompt text.")
+            raise typer.BadParameter(
+                "Could not find a positive prompt encoding node to override prompt text."
+            )
 
     if mesh_seed is not None:
         found = _find_node_by_class(prompt, "Trellis2MeshWithVoxelAdvancedGenerator")
@@ -118,6 +180,41 @@ def _apply_overrides(
         changes.append(f"texture_seed={texture_seed} -> node {found[0]}")
 
     return changes
+
+
+def _submit_prompt(base: str, prompt: dict[str, Any], client_id: str | None) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "prompt": prompt,
+        "client_id": client_id or str(uuid.uuid4()),
+    }
+    with httpx.Client(timeout=60.0) as client:
+        r = client.post(f"{base}/prompt", json=payload)
+        r.raise_for_status()
+        return r.json()
+
+
+def _upload_input_image(base: str, image_path: Path, overwrite: bool = True) -> str:
+    if not image_path.exists():
+        raise typer.BadParameter(f"Image file not found: {image_path}")
+
+    guessed_type, _ = mimetypes.guess_type(str(image_path))
+    content_type = guessed_type or "application/octet-stream"
+    with image_path.open("rb") as f, httpx.Client(timeout=120.0) as client:
+        files = {"image": (image_path.name, f, content_type)}
+        data = {"overwrite": "true" if overwrite else "false", "type": "input"}
+        resp = client.post(f"{base}/upload/image", files=files, data=data)
+        resp.raise_for_status()
+        payload = resp.json()
+
+    if isinstance(payload, dict):
+        name = payload.get("name")
+        if isinstance(name, str) and name.strip():
+            subfolder = payload.get("subfolder")
+            if isinstance(subfolder, str) and subfolder.strip():
+                return f"{subfolder}/{name}"
+            return name
+
+    raise typer.BadParameter(f"Unexpected upload response: {json.dumps(payload)}")
 
 
 @app.command("health")
@@ -151,15 +248,7 @@ def send_prompt(
     cfg = _load_config(config)
     base = str(cfg.server_url).rstrip("/")
 
-    try:
-        data = json.loads(prompt_file.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise typer.BadParameter(f"Invalid JSON in {prompt_file}: {exc}") from exc
-
-    if not isinstance(data, dict):
-        raise typer.BadParameter("Prompt JSON root must be an object.")
-
-    prompt = _extract_prompt_payload(data)
+    prompt = _load_prompt_from_file(prompt_file)
     changes = _apply_overrides(
         prompt,
         positive_prompt=positive_prompt,
@@ -205,33 +294,58 @@ def _get_history_item(client: httpx.Client, base: str, prompt_id: str) -> dict[s
 
 
 def _extract_glb_refs(history_item: dict[str, Any]) -> list[str]:
+    return _extract_file_refs(history_item, GLB_EXTENSIONS)
+
+
+def _extract_file_refs(history_item: dict[str, Any], extensions: set[str]) -> list[str]:
     refs: list[str] = []
+
+    def collect(value: Any) -> None:
+        if isinstance(value, str):
+            if Path(value).suffix.lower() in extensions:
+                refs.append(value)
+            return
+
+        if isinstance(value, dict):
+            filename = value.get("filename")
+            if isinstance(filename, str) and Path(filename).suffix.lower() in extensions:
+                subfolder = value.get("subfolder")
+                if isinstance(subfolder, str) and subfolder.strip():
+                    refs.append(f"{subfolder}/{filename}")
+                else:
+                    refs.append(filename)
+                return
+
+            for nested in value.values():
+                collect(nested)
+            return
+
+        if isinstance(value, list):
+            for item in value:
+                collect(item)
+
     outputs = history_item.get("outputs", {})
     if not isinstance(outputs, dict):
         return refs
 
     for node_data in outputs.values():
-        if not isinstance(node_data, dict):
-            continue
-        for value in node_data.values():
-            if isinstance(value, str) and value.lower().endswith(".glb"):
-                refs.append(value)
-            elif isinstance(value, list):
-                for item in value:
-                    if isinstance(item, str) and item.lower().endswith(".glb"):
-                        refs.append(item)
+        collect(node_data)
     return refs
 
 
 def _download_glb(client: httpx.Client, base: str, glb_ref: str, out_path: Path) -> None:
-    if glb_ref.startswith("http://") or glb_ref.startswith("https://"):
-        resp = client.get(glb_ref)
+    _download_ref(client, base, glb_ref, out_path)
+
+
+def _download_ref(client: httpx.Client, base: str, file_ref: str, out_path: Path) -> None:
+    if file_ref.startswith("http://") or file_ref.startswith("https://"):
+        resp = client.get(file_ref)
         resp.raise_for_status()
         out_path.write_bytes(resp.content)
         return
 
     # Try ComfyUI /view endpoint with output type.
-    ref_path = Path(glb_ref)
+    ref_path = Path(file_ref)
     params: dict[str, str] = {"filename": ref_path.name, "type": "output"}
     if ref_path.parent.as_posix() not in ("", "."):
         params["subfolder"] = ref_path.parent.as_posix()
@@ -280,19 +394,52 @@ async def _wait_for_completion(
 
 
 def _download_from_history(base: str, prompt_id: str, history_item: dict[str, Any], out_dir: Path) -> list[Path]:
-    glb_refs = _extract_glb_refs(history_item)
-    if not glb_refs:
+    return _download_from_history_by_ext(base, prompt_id, history_item, out_dir, GLB_EXTENSIONS)
+
+
+def _download_from_history_by_ext(
+    base: str,
+    prompt_id: str,
+    history_item: dict[str, Any],
+    out_dir: Path,
+    extensions: set[str],
+) -> list[Path]:
+    refs = _extract_file_refs(history_item, extensions)
+    if not refs:
         return []
 
     out_dir.mkdir(parents=True, exist_ok=True)
     downloaded: list[Path] = []
     with httpx.Client(timeout=120.0) as client:
-        for ref in glb_refs:
-            filename = Path(ref).name or f"{prompt_id}.glb"
+        for ref in refs:
+            default_suffix = next(iter(extensions), ".bin")
+            filename = Path(ref).name or f"{prompt_id}{default_suffix}"
             dest = out_dir / filename
-            _download_glb(client, base, ref, dest)
+            _download_ref(client, base, ref, dest)
             downloaded.append(dest)
     return downloaded
+
+
+def _submit_wait_and_download(
+    *,
+    base: str,
+    prompt: dict[str, Any],
+    client_id: str | None,
+    poll_interval: float,
+    timeout: float,
+    out_dir: Path,
+    extensions: set[str],
+) -> list[Path]:
+    result = _submit_prompt(base, prompt, client_id)
+    prompt_id = result.get("prompt_id")
+    if not isinstance(prompt_id, str):
+        raise typer.BadParameter(f"Unexpected /prompt response: {json.dumps(result)}")
+
+    typer.echo(json.dumps(result, indent=2))
+    queue_state, history_item = asyncio.run(_wait_for_completion(base, prompt_id, poll_interval, timeout))
+    typer.echo("Prompt completed.")
+    typer.echo(json.dumps({"prompt_id": prompt_id, "queue": queue_state}, indent=2))
+    return _download_from_history_by_ext(base, prompt_id, history_item, out_dir, extensions)
 
 
 @app.command("wait")
@@ -339,15 +486,7 @@ def run_prompt(
     cfg = _load_config(config)
     base = str(cfg.server_url).rstrip("/")
 
-    try:
-        data = json.loads(prompt_file.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise typer.BadParameter(f"Invalid JSON in {prompt_file}: {exc}") from exc
-
-    if not isinstance(data, dict):
-        raise typer.BadParameter("Prompt JSON root must be an object.")
-
-    prompt = _extract_prompt_payload(data)
+    prompt = _load_prompt_from_file(prompt_file)
     changes = _apply_overrides(
         prompt,
         positive_prompt=positive_prompt,
@@ -361,26 +500,201 @@ def run_prompt(
         for c in changes:
             typer.echo(f"- {c}")
 
-    payload: dict[str, Any] = {
-        "prompt": prompt,
-        "client_id": client_id or str(uuid.uuid4()),
-    }
+    downloaded = _submit_wait_and_download(
+        base=base,
+        prompt=prompt,
+        client_id=client_id,
+        poll_interval=poll_interval,
+        timeout=timeout,
+        out_dir=out_dir,
+        extensions=GLB_EXTENSIONS,
+    )
+    if not downloaded:
+        typer.echo("No GLB reference found in history outputs.")
+        return
+    for path in downloaded:
+        typer.echo(f"Downloaded {path}")
 
-    with httpx.Client(timeout=60.0) as client:
-        r = client.post(f"{base}/prompt", json=payload)
-        r.raise_for_status()
-        result = r.json()
 
-    prompt_id = result.get("prompt_id")
-    if not isinstance(prompt_id, str):
-        raise typer.BadParameter(f"Unexpected /prompt response: {json.dumps(result)}")
+@app.command("text-to-image")
+def text_to_image(
+    prompt_text: str = typer.Option(..., "--prompt", help="Text prompt to generate the image"),
+    workflow_file: Path = typer.Option(
+        DEFAULT_TEXT_TO_IMAGE_WORKFLOW,
+        help="Path to qwen_image_2512 API prompt JSON",
+    ),
+    config: Path = typer.Option(CONFIG_PATH, help="Path to config.json"),
+    client_id: str | None = typer.Option(None, help="Optional ComfyUI client_id"),
+    seed: int | None = typer.Option(None, help="Override KSampler seed"),
+    filename_prefix: str | None = typer.Option(None, help="Override SaveImage filename prefix"),
+    poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
+    timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
+    out_dir: Path = typer.Option(Path("downloads"), help="Directory to write downloaded files"),
+) -> None:
+    """Generate image from text using qwen_image_2512 workflow."""
+    cfg = _load_config(config)
+    base = str(cfg.server_url).rstrip("/")
 
-    typer.echo(json.dumps(result, indent=2))
-    queue_state, history_item = asyncio.run(_wait_for_completion(base, prompt_id, poll_interval, timeout))
-    typer.echo("Prompt completed.")
-    typer.echo(json.dumps({"prompt_id": prompt_id, "queue": queue_state}, indent=2))
+    prompt = _load_prompt_from_file(workflow_file)
+    changes = _apply_overrides(
+        prompt,
+        positive_prompt=prompt_text,
+        mesh_seed=None,
+        target_face_num=None,
+        filename_prefix=None,
+        texture_seed=None,
+    )
 
-    downloaded = _download_from_history(base, prompt_id, history_item, out_dir)
+    if seed is not None:
+        node_id = _set_input_on_first_node_by_class(prompt, "KSampler", "seed", seed)
+        if node_id is None:
+            raise typer.BadParameter("Could not find KSampler for seed override.")
+        changes.append(f"seed={seed} -> node {node_id}")
+
+    if filename_prefix is not None:
+        node_id = _set_input_on_first_node_by_class(prompt, "SaveImage", "filename_prefix", filename_prefix)
+        if node_id is None:
+            raise typer.BadParameter("Could not find SaveImage for filename_prefix override.")
+        changes.append(f"filename_prefix={filename_prefix} -> node {node_id}")
+
+    if changes:
+        typer.echo("Applied overrides:")
+        for c in changes:
+            typer.echo(f"- {c}")
+
+    downloaded = _submit_wait_and_download(
+        base=base,
+        prompt=prompt,
+        client_id=client_id,
+        poll_interval=poll_interval,
+        timeout=timeout,
+        out_dir=out_dir,
+        extensions=IMAGE_EXTENSIONS,
+    )
+    if not downloaded:
+        typer.echo("No image output reference found in history outputs.")
+        return
+    for path in downloaded:
+        typer.echo(f"Downloaded {path}")
+
+
+@app.command("image-text-to-image")
+def image_text_to_image(
+    image: Path = typer.Option(..., exists=True, readable=True, help="Local input image path"),
+    prompt_text: str = typer.Option(..., "--prompt", help="Edit prompt"),
+    workflow_file: Path = typer.Option(
+        DEFAULT_IMAGE_TEXT_TO_IMAGE_WORKFLOW,
+        help="Path to qwen_image_edit_2511 API prompt JSON",
+    ),
+    config: Path = typer.Option(CONFIG_PATH, help="Path to config.json"),
+    client_id: str | None = typer.Option(None, help="Optional ComfyUI client_id"),
+    seed: int | None = typer.Option(None, help="Override KSampler seed"),
+    filename_prefix: str | None = typer.Option(None, help="Override SaveImage filename prefix"),
+    poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
+    timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
+    out_dir: Path = typer.Option(Path("downloads"), help="Directory to write downloaded files"),
+) -> None:
+    """Edit an image with text prompt using qwen_image_edit_2511 workflow."""
+    cfg = _load_config(config)
+    base = str(cfg.server_url).rstrip("/")
+
+    prompt = _load_prompt_from_file(workflow_file)
+    uploaded_image_ref = _upload_input_image(base, image)
+    updated_nodes = _replace_all_load_image_inputs(prompt, uploaded_image_ref)
+    if not updated_nodes:
+        raise typer.BadParameter("Could not find LoadImage nodes to patch uploaded image.")
+
+    changes = _apply_overrides(
+        prompt,
+        positive_prompt=prompt_text,
+        mesh_seed=None,
+        target_face_num=None,
+        filename_prefix=None,
+        texture_seed=None,
+    )
+    changes.append(f"image={uploaded_image_ref} -> nodes {', '.join(updated_nodes)}")
+
+    if seed is not None:
+        node_id = _set_input_on_first_node_by_class(prompt, "KSampler", "seed", seed)
+        if node_id is None:
+            raise typer.BadParameter("Could not find KSampler for seed override.")
+        changes.append(f"seed={seed} -> node {node_id}")
+
+    if filename_prefix is not None:
+        node_id = _set_input_on_first_node_by_class(prompt, "SaveImage", "filename_prefix", filename_prefix)
+        if node_id is None:
+            raise typer.BadParameter("Could not find SaveImage for filename_prefix override.")
+        changes.append(f"filename_prefix={filename_prefix} -> node {node_id}")
+
+    typer.echo("Applied overrides:")
+    for c in changes:
+        typer.echo(f"- {c}")
+
+    downloaded = _submit_wait_and_download(
+        base=base,
+        prompt=prompt,
+        client_id=client_id,
+        poll_interval=poll_interval,
+        timeout=timeout,
+        out_dir=out_dir,
+        extensions=IMAGE_EXTENSIONS,
+    )
+    if not downloaded:
+        typer.echo("No image output reference found in history outputs.")
+        return
+    for path in downloaded:
+        typer.echo(f"Downloaded {path}")
+
+
+@app.command("image-to-glb")
+def image_to_glb(
+    image: Path = typer.Option(..., exists=True, readable=True, help="Local input image path"),
+    workflow_file: Path = typer.Option(
+        DEFAULT_IMAGE_TO_GLB_WORKFLOW,
+        help="Path to img_to_trellis2 API prompt JSON",
+    ),
+    config: Path = typer.Option(CONFIG_PATH, help="Path to config.json"),
+    client_id: str | None = typer.Option(None, help="Optional ComfyUI client_id"),
+    mesh_seed: int | None = typer.Option(None, help="Override Trellis mesh seed"),
+    target_face_num: int | None = typer.Option(None, help="Override target face count"),
+    filename_prefix: str | None = typer.Option(None, help="Override output filename prefix"),
+    texture_seed: int | None = typer.Option(None, help="Override Trellis texture seed"),
+    poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
+    timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
+    out_dir: Path = typer.Option(Path("downloads"), help="Directory to write downloaded files"),
+) -> None:
+    """Convert image to GLB using img_to_trellis2 workflow."""
+    cfg = _load_config(config)
+    base = str(cfg.server_url).rstrip("/")
+
+    prompt = _load_prompt_from_file(workflow_file)
+    uploaded_image_ref = _upload_input_image(base, image)
+    updated_nodes = _replace_all_load_image_inputs(prompt, uploaded_image_ref)
+    if not updated_nodes:
+        raise typer.BadParameter("Could not find LoadImage nodes to patch uploaded image.")
+
+    changes = _apply_overrides(
+        prompt,
+        positive_prompt=None,
+        mesh_seed=mesh_seed,
+        target_face_num=target_face_num,
+        filename_prefix=filename_prefix,
+        texture_seed=texture_seed,
+    )
+    changes.append(f"image={uploaded_image_ref} -> nodes {', '.join(updated_nodes)}")
+    typer.echo("Applied overrides:")
+    for c in changes:
+        typer.echo(f"- {c}")
+
+    downloaded = _submit_wait_and_download(
+        base=base,
+        prompt=prompt,
+        client_id=client_id,
+        poll_interval=poll_interval,
+        timeout=timeout,
+        out_dir=out_dir,
+        extensions=GLB_EXTENSIONS,
+    )
     if not downloaded:
         typer.echo("No GLB reference found in history outputs.")
         return
