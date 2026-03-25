@@ -4,3 +4,4 @@ downloads/
 __pycache__/
 *.pyc
 config.json
+.DS_Store
