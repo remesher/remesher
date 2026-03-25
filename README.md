@@ -83,13 +83,35 @@ uv run comfy-prompt-cli image-to-glb \
   --texture-seed 67890
 ```
 
-### 5) Submit prompt JSON
+### 5) Rig GLB (rig_glb_mia)
+
+```bash
+uv run comfy-prompt-cli rig-glb \
+  --mesh wrestler_multi_trellis.glb \
+  --glb-name rigged
+```
+
+### 6) Text to GLB (end-to-end)
+
+```bash
+uv run comfy-prompt-cli text-to-glb \
+  --prompt "A stylized wrestler character, full body, neutral pose"
+```
+
+### 7) Text to Rigged GLB (end-to-end)
+
+```bash
+uv run comfy-prompt-cli text-to-rigged-glb \
+  --prompt "A stylized wrestler character, full body, neutral pose"
+```
+
+### 8) Submit prompt JSON
 
 ```bash
 uv run comfy-prompt-cli send path/to/prompt_api.json
 ```
 
-### 6) Submit with overrides
+### 9) Submit with overrides
 
 ```bash
 uv run comfy-prompt-cli send path/to/prompt_api.json \
@@ -100,13 +122,13 @@ uv run comfy-prompt-cli send path/to/prompt_api.json \
   --texture-seed 67890
 ```
 
-### 7) Wait for completion + download GLB
+### 10) Wait for completion + download GLB
 
 ```bash
 uv run comfy-prompt-cli wait <prompt_id> --out-dir downloads
 ```
 
-### 8) One-shot full pass (submit + wait + download)
+### 11) One-shot full pass (submit + wait + download)
 
 ```bash
 uv run comfy-prompt-cli run path/to/prompt_api.json \
@@ -118,7 +140,7 @@ uv run comfy-prompt-cli run path/to/prompt_api.json \
   --out-dir downloads
 ```
 
-### 9) Dry run (build payload only)
+### 12) Dry run (build payload only)
 
 ```bash
 uv run comfy-prompt-cli send path/to/prompt_api.json --dry-run

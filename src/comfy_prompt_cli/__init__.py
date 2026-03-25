@@ -929,6 +929,377 @@ def rig_glb(
         typer.echo(f"Downloaded {path}")
 
 
+@app.command("text-to-glb")
+def text_to_glb(
+    prompt_text: str = typer.Option(
+        ..., "--prompt", help="Text prompt to generate the source image"
+    ),
+    text_workflow_file: Path = typer.Option(
+        DEFAULT_TEXT_TO_IMAGE_WORKFLOW,
+        help="Path to text-to-image API prompt JSON",
+    ),
+    glb_workflow_file: Path = typer.Option(
+        DEFAULT_IMAGE_TO_GLB_WORKFLOW,
+        help="Path to image-to-glb API prompt JSON",
+    ),
+    config: Path = typer.Option(CONFIG_PATH, help="Path to config.json"),
+    client_id: str | None = typer.Option(None, help="Optional ComfyUI client_id"),
+    seed: int | None = typer.Option(None, help="Override KSampler seed for text stage"),
+    image_filename_prefix: str | None = typer.Option(
+        None,
+        help="Override SaveImage filename prefix for text stage",
+    ),
+    mesh_seed: int | None = typer.Option(None, help="Override Trellis mesh seed"),
+    target_face_num: int | None = typer.Option(None, help="Override target face count"),
+    filename_prefix: str | None = typer.Option(
+        None, help="Override Trellis export filename prefix"
+    ),
+    texture_seed: int | None = typer.Option(None, help="Override Trellis texture seed"),
+    poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
+    timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
+    out_dir: Path = typer.Option(
+        Path("downloads"), help="Directory to write downloaded files"
+    ),
+) -> None:
+    """Generate a GLB end-to-end: text-to-image, then image-to-glb."""
+    cfg = _load_config(config)
+    base = str(cfg.server_url).rstrip("/")
+
+    text_out_dir = out_dir / "text_to_glb_images"
+    glb_out_dir = out_dir / "text_to_glb_glb"
+
+    typer.echo("Stage 1/2: text-to-image")
+    text_prompt = _load_prompt_from_file(text_workflow_file)
+    text_changes = _apply_overrides(
+        text_prompt,
+        positive_prompt=prompt_text,
+        mesh_seed=None,
+        target_face_num=None,
+        filename_prefix=None,
+        texture_seed=None,
+    )
+    if seed is not None:
+        node_id = _set_input_on_first_node_by_class(
+            text_prompt, "KSampler", "seed", seed
+        )
+        if node_id is None:
+            raise typer.BadParameter("Could not find KSampler for seed override.")
+        text_changes.append(f"seed={seed} -> node {node_id}")
+    if image_filename_prefix is not None:
+        node_id = _set_input_on_first_node_by_class(
+            text_prompt, "SaveImage", "filename_prefix", image_filename_prefix
+        )
+        if node_id is None:
+            raise typer.BadParameter(
+                "Could not find SaveImage for image_filename_prefix override."
+            )
+        text_changes.append(
+            f"image_filename_prefix={image_filename_prefix} -> node {node_id}"
+        )
+
+    if text_changes:
+        typer.echo("Applied overrides:")
+        for c in text_changes:
+            typer.echo(f"- {c}")
+
+    images = _submit_wait_and_download(
+        base=base,
+        prompt=text_prompt,
+        client_id=client_id,
+        poll_interval=poll_interval,
+        timeout=timeout,
+        out_dir=text_out_dir,
+        extensions=IMAGE_EXTENSIONS,
+    )
+    if not images:
+        raise typer.BadParameter(
+            "No image output reference found in text-to-image stage."
+        )
+
+    source_image = images[0]
+    typer.echo(f"Using image for GLB stage: {source_image}")
+
+    typer.echo("Stage 2/2: image-to-glb")
+    glb_prompt = _load_prompt_from_file(glb_workflow_file)
+    uploaded_image_ref = _upload_input_image(base, source_image)
+    updated_nodes = _replace_all_load_image_inputs(glb_prompt, uploaded_image_ref)
+    if not updated_nodes:
+        raise typer.BadParameter(
+            "Could not find LoadImage nodes to patch uploaded image for GLB stage."
+        )
+
+    glb_changes = _apply_overrides(
+        glb_prompt,
+        positive_prompt=None,
+        mesh_seed=mesh_seed,
+        target_face_num=target_face_num,
+        filename_prefix=filename_prefix,
+        texture_seed=texture_seed,
+    )
+    glb_changes.append(
+        f"image={uploaded_image_ref} -> nodes {', '.join(updated_nodes)}"
+    )
+    typer.echo("Applied overrides:")
+    for c in glb_changes:
+        typer.echo(f"- {c}")
+
+    glb_downloads = _submit_wait_and_download(
+        base=base,
+        prompt=glb_prompt,
+        client_id=client_id,
+        poll_interval=poll_interval,
+        timeout=timeout,
+        out_dir=glb_out_dir,
+        extensions=GLB_EXTENSIONS,
+    )
+    if not glb_downloads:
+        typer.echo("No GLB reference found in history outputs.")
+        return
+    for path in glb_downloads:
+        typer.echo(f"Downloaded {path}")
+
+
+@app.command("text-to-rigged-glb")
+def text_to_rigged_glb(
+    prompt_text: str = typer.Option(
+        ..., "--prompt", help="Text prompt to generate the source image"
+    ),
+    text_workflow_file: Path = typer.Option(
+        DEFAULT_TEXT_TO_IMAGE_WORKFLOW,
+        help="Path to text-to-image API prompt JSON",
+    ),
+    glb_workflow_file: Path = typer.Option(
+        DEFAULT_IMAGE_TO_GLB_WORKFLOW,
+        help="Path to image-to-glb API prompt JSON",
+    ),
+    rig_workflow_file: Path = typer.Option(
+        DEFAULT_RIG_GLB_WORKFLOW,
+        help="Path to rig_glb_mia API prompt JSON",
+    ),
+    config: Path = typer.Option(CONFIG_PATH, help="Path to config.json"),
+    client_id: str | None = typer.Option(None, help="Optional ComfyUI client_id"),
+    seed: int | None = typer.Option(None, help="Override KSampler seed for text stage"),
+    image_filename_prefix: str | None = typer.Option(
+        None,
+        help="Override SaveImage filename prefix for text stage",
+    ),
+    mesh_seed: int | None = typer.Option(None, help="Override Trellis mesh seed"),
+    target_face_num: int | None = typer.Option(None, help="Override target face count"),
+    filename_prefix: str | None = typer.Option(
+        None, help="Override Trellis export filename prefix"
+    ),
+    texture_seed: int | None = typer.Option(None, help="Override Trellis texture seed"),
+    glb_name: str | None = typer.Option(
+        None,
+        help="Rigged GLB base name; defaults to the stem of the generated GLB",
+    ),
+    no_fingers: bool | None = typer.Option(
+        None,
+        help="Override MIAAutoRig no_fingers",
+    ),
+    use_normal: bool | None = typer.Option(
+        None,
+        help="Override MIAAutoRig use_normal",
+    ),
+    reset_to_rest: bool | None = typer.Option(
+        None,
+        help="Override MIAAutoRig reset_to_rest",
+    ),
+    poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
+    timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
+    out_dir: Path = typer.Option(
+        Path("downloads"), help="Directory to write downloaded files"
+    ),
+) -> None:
+    """Generate and rig end-to-end: text-to-image, image-to-glb, then rig-glb."""
+    cfg = _load_config(config)
+    base = str(cfg.server_url).rstrip("/")
+
+    text_out_dir = out_dir / "text_to_rigged_glb_images"
+    glb_out_dir = out_dir / "text_to_rigged_glb_glb"
+    rig_out_dir = out_dir / "text_to_rigged_glb_rigged"
+
+    typer.echo("Stage 1/3: text-to-image")
+    text_prompt = _load_prompt_from_file(text_workflow_file)
+    text_changes = _apply_overrides(
+        text_prompt,
+        positive_prompt=prompt_text,
+        mesh_seed=None,
+        target_face_num=None,
+        filename_prefix=None,
+        texture_seed=None,
+    )
+    if seed is not None:
+        node_id = _set_input_on_first_node_by_class(
+            text_prompt, "KSampler", "seed", seed
+        )
+        if node_id is None:
+            raise typer.BadParameter("Could not find KSampler for seed override.")
+        text_changes.append(f"seed={seed} -> node {node_id}")
+    if image_filename_prefix is not None:
+        node_id = _set_input_on_first_node_by_class(
+            text_prompt, "SaveImage", "filename_prefix", image_filename_prefix
+        )
+        if node_id is None:
+            raise typer.BadParameter(
+                "Could not find SaveImage for image_filename_prefix override."
+            )
+        text_changes.append(
+            f"image_filename_prefix={image_filename_prefix} -> node {node_id}"
+        )
+
+    if text_changes:
+        typer.echo("Applied overrides:")
+        for c in text_changes:
+            typer.echo(f"- {c}")
+
+    images = _submit_wait_and_download(
+        base=base,
+        prompt=text_prompt,
+        client_id=client_id,
+        poll_interval=poll_interval,
+        timeout=timeout,
+        out_dir=text_out_dir,
+        extensions=IMAGE_EXTENSIONS,
+    )
+    if not images:
+        raise typer.BadParameter(
+            "No image output reference found in text-to-image stage."
+        )
+    source_image = images[0]
+    typer.echo(f"Using image for GLB stage: {source_image}")
+
+    typer.echo("Stage 2/3: image-to-glb")
+    glb_prompt = _load_prompt_from_file(glb_workflow_file)
+    uploaded_image_ref = _upload_input_image(base, source_image)
+    updated_nodes = _replace_all_load_image_inputs(glb_prompt, uploaded_image_ref)
+    if not updated_nodes:
+        raise typer.BadParameter(
+            "Could not find LoadImage nodes to patch uploaded image for GLB stage."
+        )
+
+    glb_changes = _apply_overrides(
+        glb_prompt,
+        positive_prompt=None,
+        mesh_seed=mesh_seed,
+        target_face_num=target_face_num,
+        filename_prefix=filename_prefix,
+        texture_seed=texture_seed,
+    )
+    glb_changes.append(
+        f"image={uploaded_image_ref} -> nodes {', '.join(updated_nodes)}"
+    )
+    typer.echo("Applied overrides:")
+    for c in glb_changes:
+        typer.echo(f"- {c}")
+
+    stage2_result = _submit_prompt(base, glb_prompt, client_id)
+    stage2_prompt_id = stage2_result.get("prompt_id")
+    if not isinstance(stage2_prompt_id, str):
+        raise typer.BadParameter(
+            f"Unexpected /prompt response for image-to-glb stage: {json.dumps(stage2_result)}"
+        )
+    typer.echo(json.dumps(stage2_result, indent=2))
+    queue_state, history_item = asyncio.run(
+        _wait_for_completion(base, stage2_prompt_id, poll_interval, timeout)
+    )
+    typer.echo("Image-to-GLB stage completed.")
+    typer.echo(
+        json.dumps({"prompt_id": stage2_prompt_id, "queue": queue_state}, indent=2)
+    )
+
+    glb_refs = _extract_file_refs(history_item, GLB_EXTENSIONS)
+    if not glb_refs:
+        raise typer.BadParameter(
+            "No GLB reference found in image-to-glb stage outputs."
+        )
+    source_glb_ref = glb_refs[0]
+    typer.echo(f"Using GLB for rig stage: {source_glb_ref}")
+
+    stage2_downloads = _download_from_history_by_ext(
+        base,
+        stage2_prompt_id,
+        history_item,
+        glb_out_dir,
+        GLB_EXTENSIONS,
+    )
+    for path in stage2_downloads:
+        typer.echo(f"Downloaded {path}")
+
+    typer.echo("Stage 3/3: rig-glb")
+    rig_prompt = _load_prompt_from_file(rig_workflow_file)
+    rig_changes: list[str] = []
+
+    rig_mesh_node_id = _set_input_on_first_node_by_class(
+        rig_prompt, "Hy3DUploadMesh", "mesh", source_glb_ref
+    )
+    if rig_mesh_node_id is None:
+        raise typer.BadParameter(
+            "Could not find Hy3DUploadMesh for mesh override in rig stage."
+        )
+    rig_changes.append(f"mesh={source_glb_ref} -> node {rig_mesh_node_id}")
+
+    resolved_glb_name = glb_name or Path(source_glb_ref).stem
+    if not resolved_glb_name.strip():
+        raise typer.BadParameter("Derived glb_name is empty for rig stage.")
+
+    rig_name_node_id = _set_input_on_first_node_by_class(
+        rig_prompt, "MIAAutoRig", "fbx_name", resolved_glb_name
+    )
+    if rig_name_node_id is None:
+        raise typer.BadParameter("Could not find MIAAutoRig for fbx_name override.")
+    rig_changes.append(f"fbx_name={resolved_glb_name} -> node {rig_name_node_id}")
+
+    if no_fingers is not None:
+        node_id = _set_input_on_first_node_by_class(
+            rig_prompt, "MIAAutoRig", "no_fingers", no_fingers
+        )
+        if node_id is None:
+            raise typer.BadParameter(
+                "Could not find MIAAutoRig for no_fingers override."
+            )
+        rig_changes.append(f"no_fingers={no_fingers} -> node {node_id}")
+
+    if use_normal is not None:
+        node_id = _set_input_on_first_node_by_class(
+            rig_prompt, "MIAAutoRig", "use_normal", use_normal
+        )
+        if node_id is None:
+            raise typer.BadParameter(
+                "Could not find MIAAutoRig for use_normal override."
+            )
+        rig_changes.append(f"use_normal={use_normal} -> node {node_id}")
+
+    if reset_to_rest is not None:
+        node_id = _set_input_on_first_node_by_class(
+            rig_prompt, "MIAAutoRig", "reset_to_rest", reset_to_rest
+        )
+        if node_id is None:
+            raise typer.BadParameter(
+                "Could not find MIAAutoRig for reset_to_rest override."
+            )
+        rig_changes.append(f"reset_to_rest={reset_to_rest} -> node {node_id}")
+
+    typer.echo("Applied overrides:")
+    for c in rig_changes:
+        typer.echo(f"- {c}")
+
+    rigged_downloads = _submit_wait_and_download(
+        base=base,
+        prompt=rig_prompt,
+        client_id=client_id,
+        poll_interval=poll_interval,
+        timeout=timeout,
+        out_dir=rig_out_dir,
+        extensions=GLB_EXTENSIONS,
+    )
+    if not rigged_downloads:
+        typer.echo("No GLB reference found in rig stage history outputs.")
+        return
+    for path in rigged_downloads:
+        typer.echo(f"Downloaded {path}")
+
+
 config_app = typer.Typer(help="Manage local config")
 app.add_typer(config_app, name="config")
 
@@ -946,7 +1317,7 @@ def config_init(
     if out.exists() and not force:
         raise typer.BadParameter(f"{out} already exists. Pass --force to overwrite.")
 
-    cfg = AppConfig(server_url=server_url)
+    cfg = AppConfig.model_validate({"server_url": server_url})
     out.write_text(cfg.model_dump_json(indent=2), encoding="utf-8")
     typer.echo(f"Wrote {out}")
 
