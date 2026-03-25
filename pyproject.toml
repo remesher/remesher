@@ -11,6 +11,7 @@ dependencies = [
     "httpx>=0.28.1",
     "pydantic>=2.12.5",
     "typer[all]>=0.24.1",
+    "websockets>=15.0.1",
 ]
 
 [project.scripts]

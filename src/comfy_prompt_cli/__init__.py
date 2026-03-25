@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import json
 import mimetypes
 import uuid
@@ -216,6 +217,123 @@ def _submit_prompt(
         return r.json()
 
 
+def _build_ws_url(base: str, client_id: str) -> str:
+    ws_base = base
+    if base.startswith("https://"):
+        ws_base = "wss://" + base[len("https://") :]
+    elif base.startswith("http://"):
+        ws_base = "ws://" + base[len("http://") :]
+    return f"{ws_base}/ws?{urlencode({'clientId': client_id})}"
+
+
+def _format_ws_progress_line(message: dict[str, Any], prompt_id: str) -> str | None:
+    msg_type = message.get("type")
+    data = message.get("data")
+    if not isinstance(msg_type, str):
+        return None
+
+    payload = data if isinstance(data, dict) else {}
+    payload_prompt_id = payload.get("prompt_id")
+    if isinstance(payload_prompt_id, str) and payload_prompt_id != prompt_id:
+        return None
+
+    if msg_type == "execution_start":
+        return f"WS: execution started for prompt_id={prompt_id}"
+
+    if msg_type == "executing":
+        node = payload.get("node")
+        if node is None:
+            return f"WS: execution finished for prompt_id={prompt_id}"
+        return f"WS: executing node {node}"
+
+    if msg_type == "executed":
+        node = payload.get("node")
+        if node is None:
+            return None
+        return f"WS: completed node {node}"
+
+    if msg_type == "progress":
+        value = payload.get("value")
+        max_value = payload.get("max")
+        if isinstance(value, int) and isinstance(max_value, int) and max_value > 0:
+            percent = int((value / max_value) * 100)
+            return f"WS: progress {value}/{max_value} ({percent}%)"
+        return None
+
+    if msg_type == "execution_cached":
+        nodes = payload.get("nodes")
+        if isinstance(nodes, list):
+            return f"WS: using cached outputs for nodes {', '.join(map(str, nodes))}"
+        return "WS: using cached outputs"
+
+    if msg_type == "execution_error":
+        error_message = payload.get("exception_message")
+        if isinstance(error_message, str) and error_message.strip():
+            return f"WS: execution error: {error_message}"
+        return "WS: execution error"
+
+    if msg_type == "status":
+        status = payload.get("status")
+        if not isinstance(status, dict):
+            return None
+        exec_info = status.get("exec_info")
+        if not isinstance(exec_info, dict):
+            return None
+        queue_remaining = exec_info.get("queue_remaining")
+        if isinstance(queue_remaining, int):
+            return f"WS: queue remaining={queue_remaining}"
+
+    return None
+
+
+async def _stream_ws_progress(
+    base: str,
+    client_id: str,
+    prompt_id: str,
+    stop_event: asyncio.Event,
+) -> None:
+    try:
+        websockets = importlib.import_module("websockets")
+    except Exception:
+        typer.echo("WS: websockets package not available; continuing with polling.")
+        return
+
+    ws_url = _build_ws_url(base, client_id)
+    try:
+        async with websockets.connect(ws_url, open_timeout=10, ping_interval=20) as ws:
+            typer.echo(f"WS: connected ({ws_url})")
+            last_line: str | None = None
+
+            while not stop_event.is_set():
+                try:
+                    raw = await asyncio.wait_for(ws.recv(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    continue
+                except Exception:
+                    return
+
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8", errors="ignore")
+
+                if not isinstance(raw, str):
+                    continue
+
+                try:
+                    message = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+
+                if not isinstance(message, dict):
+                    continue
+
+                line = _format_ws_progress_line(message, prompt_id)
+                if line and line != last_line:
+                    typer.echo(line)
+                    last_line = line
+    except Exception:
+        typer.echo("WS: unavailable; continuing with polling.")
+
+
 def _upload_input_image(base: str, image_path: Path, overwrite: bool = True) -> str:
     return _upload_input_asset(base, image_path, overwrite=overwrite, label="Image")
 
@@ -410,8 +528,17 @@ async def _wait_for_completion(
     prompt_id: str,
     poll_interval: float,
     timeout: float,
+    client_id: str | None = None,
+    verbose: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     elapsed = 0.0
+    stop_event = asyncio.Event()
+    ws_task: asyncio.Task[None] | None = None
+    if client_id is not None:
+        ws_task = asyncio.create_task(
+            _stream_ws_progress(base, client_id, prompt_id, stop_event)
+        )
+
     async with httpx.AsyncClient(timeout=60.0) as aclient:
         while elapsed <= timeout:
             q = await aclient.get(f"{base}/queue")
@@ -432,25 +559,33 @@ async def _wait_for_completion(
                     history_item = history_payload
 
             if history_item is not None:
+                stop_event.set()
+                if ws_task is not None:
+                    await ws_task
                 return (
                     queue_state if isinstance(queue_state, dict) else {}
                 ), history_item
 
-            running = (
-                queue_state.get("queue_running", [])
-                if isinstance(queue_state, dict)
-                else []
-            )
-            pending = (
-                queue_state.get("queue_pending", [])
-                if isinstance(queue_state, dict)
-                else []
-            )
-            typer.echo(
-                f"Waiting... running={len(running)} pending={len(pending)} elapsed={int(elapsed)}s"
-            )
+            if verbose:
+                running = (
+                    queue_state.get("queue_running", [])
+                    if isinstance(queue_state, dict)
+                    else []
+                )
+                pending = (
+                    queue_state.get("queue_pending", [])
+                    if isinstance(queue_state, dict)
+                    else []
+                )
+                typer.echo(
+                    f"Waiting... running={len(running)} pending={len(pending)} elapsed={int(elapsed)}s"
+                )
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
+
+    stop_event.set()
+    if ws_task is not None:
+        await ws_task
 
     raise typer.BadParameter(f"Timed out waiting for prompt_id={prompt_id}")
 
@@ -495,15 +630,24 @@ def _submit_wait_and_download(
     timeout: float,
     out_dir: Path,
     extensions: set[str],
+    verbose: bool = False,
 ) -> list[Path]:
-    result = _submit_prompt(base, prompt, client_id)
+    resolved_client_id = client_id or str(uuid.uuid4())
+    result = _submit_prompt(base, prompt, resolved_client_id)
     prompt_id = result.get("prompt_id")
     if not isinstance(prompt_id, str):
         raise typer.BadParameter(f"Unexpected /prompt response: {json.dumps(result)}")
 
     typer.echo(json.dumps(result, indent=2))
     queue_state, history_item = asyncio.run(
-        _wait_for_completion(base, prompt_id, poll_interval, timeout)
+        _wait_for_completion(
+            base,
+            prompt_id,
+            poll_interval,
+            timeout,
+            client_id=resolved_client_id,
+            verbose=verbose,
+        )
     )
     typer.echo("Prompt completed.")
     typer.echo(json.dumps({"prompt_id": prompt_id, "queue": queue_state}, indent=2))
@@ -516,8 +660,13 @@ def _submit_wait_and_download(
 def wait_prompt(
     prompt_id: str = typer.Argument(..., help="ComfyUI prompt_id"),
     config: Path = typer.Option(CONFIG_PATH, help="Path to config.json"),
+    client_id: str | None = typer.Option(
+        None,
+        help="Optional ComfyUI client_id for /ws progress updates",
+    ),
     poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
     timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
+    verbose: bool = typer.Option(False, help="Show polling progress logs"),
     download_glb: bool = typer.Option(
         True, help="Download generated GLB when available"
     ),
@@ -530,7 +679,14 @@ def wait_prompt(
     base = str(cfg.server_url).rstrip("/")
 
     queue_state, history_item = asyncio.run(
-        _wait_for_completion(base, prompt_id, poll_interval, timeout)
+        _wait_for_completion(
+            base,
+            prompt_id,
+            poll_interval,
+            timeout,
+            client_id=client_id,
+            verbose=verbose,
+        )
     )
     typer.echo("Prompt completed.")
     typer.echo(json.dumps({"prompt_id": prompt_id, "queue": queue_state}, indent=2))
@@ -562,6 +718,7 @@ def run_prompt(
     texture_seed: int | None = typer.Option(None, help="Override Trellis texture seed"),
     poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
     timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
+    verbose: bool = typer.Option(False, help="Show polling progress logs"),
     out_dir: Path = typer.Option(
         Path("downloads"), help="Directory to write downloaded files"
     ),
@@ -592,6 +749,7 @@ def run_prompt(
         timeout=timeout,
         out_dir=out_dir,
         extensions=GLB_EXTENSIONS,
+        verbose=verbose,
     )
     if not downloaded:
         typer.echo("No GLB reference found in history outputs.")
@@ -617,6 +775,7 @@ def text_to_image(
     ),
     poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
     timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
+    verbose: bool = typer.Option(False, help="Show polling progress logs"),
     out_dir: Path = typer.Option(
         Path("downloads"), help="Directory to write downloaded files"
     ),
@@ -664,6 +823,7 @@ def text_to_image(
         timeout=timeout,
         out_dir=out_dir,
         extensions=IMAGE_EXTENSIONS,
+        verbose=verbose,
     )
     if not downloaded:
         typer.echo("No image output reference found in history outputs.")
@@ -690,6 +850,7 @@ def image_text_to_image(
     ),
     poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
     timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
+    verbose: bool = typer.Option(False, help="Show polling progress logs"),
     out_dir: Path = typer.Option(
         Path("downloads"), help="Directory to write downloaded files"
     ),
@@ -744,6 +905,7 @@ def image_text_to_image(
         timeout=timeout,
         out_dir=out_dir,
         extensions=IMAGE_EXTENSIONS,
+        verbose=verbose,
     )
     if not downloaded:
         typer.echo("No image output reference found in history outputs.")
@@ -771,6 +933,7 @@ def image_to_glb(
     texture_seed: int | None = typer.Option(None, help="Override Trellis texture seed"),
     poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
     timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
+    verbose: bool = typer.Option(False, help="Show polling progress logs"),
     out_dir: Path = typer.Option(
         Path("downloads"), help="Directory to write downloaded files"
     ),
@@ -808,6 +971,7 @@ def image_to_glb(
         timeout=timeout,
         out_dir=out_dir,
         extensions=GLB_EXTENSIONS,
+        verbose=verbose,
     )
     if not downloaded:
         typer.echo("No GLB reference found in history outputs.")
@@ -846,6 +1010,7 @@ def rig_glb(
     ),
     poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
     timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
+    verbose: bool = typer.Option(False, help="Show polling progress logs"),
     out_dir: Path = typer.Option(
         Path("downloads"), help="Directory to write downloaded files"
     ),
@@ -936,6 +1101,7 @@ def rig_glb(
         timeout=timeout,
         out_dir=out_dir,
         extensions=GLB_EXTENSIONS,
+        verbose=verbose,
     )
     if not downloaded:
         typer.echo("No GLB reference found in history outputs.")
@@ -972,6 +1138,7 @@ def text_to_glb(
     texture_seed: int | None = typer.Option(None, help="Override Trellis texture seed"),
     poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
     timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
+    verbose: bool = typer.Option(False, help="Show polling progress logs"),
     out_dir: Path = typer.Option(
         Path("downloads"), help="Directory to write downloaded files"
     ),
@@ -1025,6 +1192,7 @@ def text_to_glb(
         timeout=timeout,
         out_dir=text_out_dir,
         extensions=IMAGE_EXTENSIONS,
+        verbose=verbose,
     )
     if not images:
         raise typer.BadParameter(
@@ -1066,6 +1234,7 @@ def text_to_glb(
         timeout=timeout,
         out_dir=glb_out_dir,
         extensions=GLB_EXTENSIONS,
+        verbose=verbose,
     )
     if not glb_downloads:
         typer.echo("No GLB reference found in history outputs.")
@@ -1122,6 +1291,7 @@ def text_to_rigged_glb(
     ),
     poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
     timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
+    verbose: bool = typer.Option(False, help="Show polling progress logs"),
     out_dir: Path = typer.Option(
         Path("downloads"), help="Directory to write downloaded files"
     ),
@@ -1176,6 +1346,7 @@ def text_to_rigged_glb(
         timeout=timeout,
         out_dir=text_out_dir,
         extensions=IMAGE_EXTENSIONS,
+        verbose=verbose,
     )
     if not images:
         raise typer.BadParameter(
@@ -1208,7 +1379,8 @@ def text_to_rigged_glb(
     for c in glb_changes:
         typer.echo(f"- {c}")
 
-    stage2_result = _submit_prompt(base, glb_prompt, client_id)
+    stage2_client_id = client_id or str(uuid.uuid4())
+    stage2_result = _submit_prompt(base, glb_prompt, stage2_client_id)
     stage2_prompt_id = stage2_result.get("prompt_id")
     if not isinstance(stage2_prompt_id, str):
         raise typer.BadParameter(
@@ -1216,7 +1388,14 @@ def text_to_rigged_glb(
         )
     typer.echo(json.dumps(stage2_result, indent=2))
     queue_state, history_item = asyncio.run(
-        _wait_for_completion(base, stage2_prompt_id, poll_interval, timeout)
+        _wait_for_completion(
+            base,
+            stage2_prompt_id,
+            poll_interval,
+            timeout,
+            client_id=stage2_client_id,
+            verbose=verbose,
+        )
     )
     typer.echo("Image-to-GLB stage completed.")
     typer.echo(
@@ -1314,6 +1493,7 @@ def text_to_rigged_glb(
         timeout=timeout,
         out_dir=rig_out_dir,
         extensions=GLB_EXTENSIONS,
+        verbose=verbose,
     )
     if not rigged_downloads:
         typer.echo("No GLB reference found in rig stage history outputs.")

@@ -1,6 +1,6 @@
 # comfy-prompt-cli
 
-A small Typer CLI to submit ComfyUI API prompts, poll async completion, and download generated `.glb` outputs.
+A small Typer CLI to submit ComfyUI API prompts, stream async progress via WebSocket, and download generated outputs.
 
 ---
 
@@ -14,9 +14,8 @@ A small Typer CLI to submit ComfyUI API prompts, poll async completion, and down
   - target face count
   - file name prefix
   - texture seed
-- Waits for prompt completion by polling:
-  - `GET /queue`
-  - `GET /history/{prompt_id}`
+- Streams progress via `GET /ws?clientId=...` when a client ID is available
+- Waits for completion using `GET /history/{prompt_id}` (with queue polling fallback)
 - Auto-downloads `.glb` output via `GET /view`
 
 ---
@@ -126,6 +125,12 @@ uv run comfy-prompt-cli send path/to/prompt_api.json \
 
 ```bash
 uv run comfy-prompt-cli wait <prompt_id> --out-dir downloads
+```
+
+If you want live `/ws` progress for an already-submitted prompt, pass the same `client_id` used when submitting:
+
+```bash
+uv run comfy-prompt-cli wait <prompt_id> --client-id <client_id> --out-dir downloads
 ```
 
 ### 11) One-shot full pass (submit + wait + download)
