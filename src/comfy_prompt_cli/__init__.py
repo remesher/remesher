@@ -217,13 +217,19 @@ def _submit_prompt(
 
 
 def _upload_input_image(base: str, image_path: Path, overwrite: bool = True) -> str:
-    if not image_path.exists():
-        raise typer.BadParameter(f"Image file not found: {image_path}")
+    return _upload_input_asset(base, image_path, overwrite=overwrite, label="Image")
 
-    guessed_type, _ = mimetypes.guess_type(str(image_path))
+
+def _upload_input_asset(
+    base: str, file_path: Path, overwrite: bool = True, label: str = "File"
+) -> str:
+    if not file_path.exists():
+        raise typer.BadParameter(f"{label} file not found: {file_path}")
+
+    guessed_type, _ = mimetypes.guess_type(str(file_path))
     content_type = guessed_type or "application/octet-stream"
-    with image_path.open("rb") as f, httpx.Client(timeout=120.0) as client:
-        files = {"image": (image_path.name, f, content_type)}
+    with file_path.open("rb") as f, httpx.Client(timeout=120.0) as client:
+        files = {"image": (file_path.name, f, content_type)}
         data = {"overwrite": "true" if overwrite else "false", "type": "input"}
         resp = client.post(f"{base}/upload/image", files=files, data=data)
         resp.raise_for_status()
@@ -237,7 +243,9 @@ def _upload_input_image(base: str, image_path: Path, overwrite: bool = True) -> 
                 return f"{subfolder}/{name}"
             return name
 
-    raise typer.BadParameter(f"Unexpected upload response: {json.dumps(payload)}")
+    raise typer.BadParameter(
+        f"Unexpected {label.lower()} upload response: {json.dumps(payload)}"
+    )
 
 
 @app.command("health")
@@ -850,12 +858,19 @@ def rig_glb(
     changes: list[str] = []
 
     if mesh is not None:
+        resolved_mesh = mesh
+        mesh_path = Path(mesh)
+        if mesh_path.exists() and mesh_path.is_file():
+            uploaded_mesh_ref = _upload_input_asset(base, mesh_path, label="Mesh")
+            resolved_mesh = uploaded_mesh_ref
+            changes.append(f"mesh_upload={mesh_path} -> {uploaded_mesh_ref}")
+
         node_id = _set_input_on_first_node_by_class(
-            prompt, "Hy3DUploadMesh", "mesh", mesh
+            prompt, "Hy3DUploadMesh", "mesh", resolved_mesh
         )
         if node_id is None:
             raise typer.BadParameter("Could not find Hy3DUploadMesh for mesh override.")
-        changes.append(f"mesh={mesh} -> node {node_id}")
+        changes.append(f"mesh={resolved_mesh} -> node {node_id}")
 
     mesh_node = _find_node_by_class(prompt, "Hy3DUploadMesh")
     if not mesh_node:
@@ -1223,23 +1238,30 @@ def text_to_rigged_glb(
         glb_out_dir,
         GLB_EXTENSIONS,
     )
+    if not stage2_downloads:
+        raise typer.BadParameter("Failed to download GLB artifact for rig stage.")
+
+    downloaded_glb = stage2_downloads[0]
+    uploaded_glb_ref = _upload_input_asset(base, downloaded_glb, label="Mesh")
+
     for path in stage2_downloads:
         typer.echo(f"Downloaded {path}")
+    typer.echo(f"Uploaded GLB for rig stage: {uploaded_glb_ref}")
 
     typer.echo("Stage 3/3: rig-glb")
     rig_prompt = _load_prompt_from_file(rig_workflow_file)
     rig_changes: list[str] = []
 
     rig_mesh_node_id = _set_input_on_first_node_by_class(
-        rig_prompt, "Hy3DUploadMesh", "mesh", source_glb_ref
+        rig_prompt, "Hy3DUploadMesh", "mesh", uploaded_glb_ref
     )
     if rig_mesh_node_id is None:
         raise typer.BadParameter(
             "Could not find Hy3DUploadMesh for mesh override in rig stage."
         )
-    rig_changes.append(f"mesh={source_glb_ref} -> node {rig_mesh_node_id}")
+    rig_changes.append(f"mesh={uploaded_glb_ref} -> node {rig_mesh_node_id}")
 
-    resolved_glb_name = glb_name or Path(source_glb_ref).stem
+    resolved_glb_name = glb_name or downloaded_glb.stem
     if not resolved_glb_name.strip():
         raise typer.BadParameter("Derived glb_name is empty for rig stage.")
 
