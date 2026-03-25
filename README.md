@@ -1,6 +1,6 @@
-# comfy-prompt-cli
+# remesher
 
-A small Typer CLI to submit ComfyUI API prompts, stream async progress via WebSocket, and download generated outputs.
+An agent harness that uses a small Typer CLI to submit ComfyUI API prompts, stream async progress via WebSocket, and download generated outputs.
 
 ---
 
