@@ -1,0 +1,66 @@
+{
+  "41": {
+    "inputs": {
+      "precision": "fp32",
+      "attn_backend": "auto"
+    },
+    "class_type": "MIALoadModel",
+    "_meta": {
+      "title": "MIA: Load Model"
+    }
+  },
+  "42": {
+    "inputs": {
+      "fbx_name": "rigged",
+      "no_fingers": false,
+      "use_normal": false,
+      "reset_to_rest": false,
+      "trimesh": [
+        "57",
+        0
+      ],
+      "model": [
+        "41",
+        0
+      ]
+    },
+    "class_type": "MIAAutoRig",
+    "_meta": {
+      "title": "MIA: Auto Rig"
+    }
+  },
+  "55": {
+    "inputs": {
+      "model_file": [
+        "92",
+        0
+      ],
+      "image": ""
+    },
+    "class_type": "Preview3D",
+    "_meta": {
+      "title": "Preview 3D & Animation"
+    }
+  },
+  "57": {
+    "inputs": {
+      "mesh": "wrestler_multi_trellis.glb"
+    },
+    "class_type": "Hy3DUploadMesh",
+    "_meta": {
+      "title": "Hy3D Upload Mesh"
+    }
+  },
+  "92": {
+    "inputs": {
+      "fbx_file_path": [
+        "42",
+        0
+      ]
+    },
+    "class_type": "BlenderFBXToGLB",
+    "_meta": {
+      "title": "Blender: FBX to GLB"
+    }
+  }
+}

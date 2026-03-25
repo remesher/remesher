@@ -17,6 +17,7 @@ CONFIG_PATH = Path("config.json")
 DEFAULT_TEXT_TO_IMAGE_WORKFLOW = Path("examples/qwen_image_2512.json")
 DEFAULT_IMAGE_TEXT_TO_IMAGE_WORKFLOW = Path("examples/qwen_image_edit_2511.json")
 DEFAULT_IMAGE_TO_GLB_WORKFLOW = Path("examples/img_to_trellis2.json")
+DEFAULT_RIG_GLB_WORKFLOW = Path("examples/rig_glb_mia.json")
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 GLB_EXTENSIONS = {".glb"}
 
@@ -790,6 +791,127 @@ def image_to_glb(
     typer.echo("Applied overrides:")
     for c in changes:
         typer.echo(f"- {c}")
+
+    downloaded = _submit_wait_and_download(
+        base=base,
+        prompt=prompt,
+        client_id=client_id,
+        poll_interval=poll_interval,
+        timeout=timeout,
+        out_dir=out_dir,
+        extensions=GLB_EXTENSIONS,
+    )
+    if not downloaded:
+        typer.echo("No GLB reference found in history outputs.")
+        return
+    for path in downloaded:
+        typer.echo(f"Downloaded {path}")
+
+
+@app.command("rig-glb")
+def rig_glb(
+    workflow_file: Path = typer.Option(
+        DEFAULT_RIG_GLB_WORKFLOW,
+        help="Path to rig_glb_mia API prompt JSON",
+    ),
+    config: Path = typer.Option(CONFIG_PATH, help="Path to config.json"),
+    client_id: str | None = typer.Option(None, help="Optional ComfyUI client_id"),
+    mesh: str | None = typer.Option(
+        None,
+        help="Override Hy3DUploadMesh mesh input (ComfyUI-accessible .glb reference)",
+    ),
+    glb_name: str | None = typer.Option(
+        None,
+        help="Output GLB base name; defaults to the stem of the input mesh filename",
+    ),
+    no_fingers: bool | None = typer.Option(
+        None,
+        help="Override MIAAutoRig no_fingers",
+    ),
+    use_normal: bool | None = typer.Option(
+        None,
+        help="Override MIAAutoRig use_normal",
+    ),
+    reset_to_rest: bool | None = typer.Option(
+        None,
+        help="Override MIAAutoRig reset_to_rest",
+    ),
+    poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
+    timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
+    out_dir: Path = typer.Option(
+        Path("downloads"), help="Directory to write downloaded files"
+    ),
+) -> None:
+    """Auto-rig a GLB mesh using the MIA workflow and download the resulting GLB."""
+    cfg = _load_config(config)
+    base = str(cfg.server_url).rstrip("/")
+
+    prompt = _load_prompt_from_file(workflow_file)
+    changes: list[str] = []
+
+    if mesh is not None:
+        node_id = _set_input_on_first_node_by_class(
+            prompt, "Hy3DUploadMesh", "mesh", mesh
+        )
+        if node_id is None:
+            raise typer.BadParameter("Could not find Hy3DUploadMesh for mesh override.")
+        changes.append(f"mesh={mesh} -> node {node_id}")
+
+    mesh_node = _find_node_by_class(prompt, "Hy3DUploadMesh")
+    if not mesh_node:
+        raise typer.BadParameter("Could not find Hy3DUploadMesh node in workflow.")
+    mesh_inputs = mesh_node[1].get("inputs")
+    mesh_input = mesh_inputs.get("mesh") if isinstance(mesh_inputs, dict) else None
+    if not isinstance(mesh_input, str) or not mesh_input.strip():
+        raise typer.BadParameter(
+            "Could not determine Hy3DUploadMesh mesh input for default glb_name."
+        )
+
+    resolved_glb_name = glb_name or Path(mesh_input).stem
+    if not resolved_glb_name.strip():
+        raise typer.BadParameter("Derived glb_name is empty.")
+
+    node_id = _set_input_on_first_node_by_class(
+        prompt, "MIAAutoRig", "fbx_name", resolved_glb_name
+    )
+    if node_id is None:
+        raise typer.BadParameter("Could not find MIAAutoRig for fbx_name override.")
+    changes.append(f"fbx_name={resolved_glb_name} -> node {node_id}")
+
+    if no_fingers is not None:
+        node_id = _set_input_on_first_node_by_class(
+            prompt, "MIAAutoRig", "no_fingers", no_fingers
+        )
+        if node_id is None:
+            raise typer.BadParameter(
+                "Could not find MIAAutoRig for no_fingers override."
+            )
+        changes.append(f"no_fingers={no_fingers} -> node {node_id}")
+
+    if use_normal is not None:
+        node_id = _set_input_on_first_node_by_class(
+            prompt, "MIAAutoRig", "use_normal", use_normal
+        )
+        if node_id is None:
+            raise typer.BadParameter(
+                "Could not find MIAAutoRig for use_normal override."
+            )
+        changes.append(f"use_normal={use_normal} -> node {node_id}")
+
+    if reset_to_rest is not None:
+        node_id = _set_input_on_first_node_by_class(
+            prompt, "MIAAutoRig", "reset_to_rest", reset_to_rest
+        )
+        if node_id is None:
+            raise typer.BadParameter(
+                "Could not find MIAAutoRig for reset_to_rest override."
+            )
+        changes.append(f"reset_to_rest={reset_to_rest} -> node {node_id}")
+
+    if changes:
+        typer.echo("Applied overrides:")
+        for c in changes:
+            typer.echo(f"- {c}")
 
     downloaded = _submit_wait_and_download(
         base=base,
