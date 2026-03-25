@@ -45,16 +45,6 @@
       "title": "ModelSamplingAuraFlow"
     }
   },
-  "238:226": {
-    "inputs": {
-      "unet_name": "qwen_image_2512_fp8_e4m3fn.safetensors",
-      "weight_dtype": "default"
-    },
-    "class_type": "UNETLoader",
-    "_meta": {
-      "title": "Load Diffusion Model"
-    }
-  },
   "238:227": {
     "inputs": {
       "text": "Urban alleyway at dusk. Tall, statuesque high-fashion model striding elegantly, mid distant full body shot from an angular perspective, cinematic/editorial with bold contrasts and tactile materials. They wear a rose-gold metallic trench coat with deconstructed elements over a black long-sleeved turtleneck with subtle texture; paired with forest-green pleated pants with raw hems and a soft texture. Long braided dark hair, medium complexion. They carry a vibrant yellow designer handbag with geometric details and a structured silhouette. White architectural sneakers with bold geometric cutouts. Bold, high-contrast, tactile, urban-grit meets high-fashion impact, extreme clarity, extreme layering, post-processing with transparent light-transmitting ultra-smooth high-definition film effect, removing all noise and grain, removing all blur, removing all vintage feel, removing all roughness, drawn with 32K pixel precision, unparalleled fine line drawing of every single detail, the entire image like a brand new photograph, photorealistic\n",
@@ -99,8 +89,8 @@
   },
   "238:232": {
     "inputs": {
-      "width": 1328,
-      "height": 1328,
+      "width": 1024,
+      "height": 1024,
       "batch_size": 1
     },
     "class_type": "EmptySD3LatentImage",
@@ -110,7 +100,7 @@
   },
   "238:230": {
     "inputs": {
-      "seed": 995240402354710,
+      "seed": 109359630786095,
       "steps": [
         "238:240",
         0
@@ -164,7 +154,7 @@
   },
   "238:229": {
     "inputs": {
-      "value": false
+      "value": true
     },
     "class_type": "PrimitiveBoolean",
     "_meta": {
@@ -223,26 +213,6 @@
       "title": "Switch (model)"
     }
   },
-  "238:240": {
-    "inputs": {
-      "switch": [
-        "238:229",
-        0
-      ],
-      "on_false": [
-        "238:224",
-        0
-      ],
-      "on_true": [
-        "238:225",
-        0
-      ]
-    },
-    "class_type": "ComfySwitchNode",
-    "_meta": {
-      "title": "Switch (steps)"
-    }
-  },
   "238:243": {
     "inputs": {
       "switch": [
@@ -261,6 +231,36 @@
     "class_type": "ComfySwitchNode",
     "_meta": {
       "title": "Switch (cfg)"
+    }
+  },
+  "238:226": {
+    "inputs": {
+      "unet_name": "qwen_image_2512_fp8_e4m3fn.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "238:240": {
+    "inputs": {
+      "switch": [
+        "238:229",
+        0
+      ],
+      "on_false": [
+        "238:224",
+        0
+      ],
+      "on_true": [
+        "238:225",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Switch (steps)"
     }
   }
 }

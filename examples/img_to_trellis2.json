@@ -2,7 +2,7 @@
   "52": {
     "inputs": {
       "model_file": [
-        "56:19",
+        "55",
         0
       ],
       "image": ""
@@ -32,11 +32,26 @@
   },
   "54": {
     "inputs": {
-      "image": "ComfyUI_00130_.png"
+      "image": "airforce1.png"
     },
     "class_type": "LoadImage",
     "_meta": {
       "title": "Load Image"
+    }
+  },
+  "55": {
+    "inputs": {
+      "filename_prefix": "3D/trellis2",
+      "file_format": "glb",
+      "save_file": true,
+      "trimesh": [
+        "56:57",
+        0
+      ]
+    },
+    "class_type": "Hy3DExportMesh",
+    "_meta": {
+      "title": "Hy3DExportMesh"
     }
   },
   "56:39": {
@@ -45,7 +60,7 @@
       "backend": "flash_attn",
       "device": "cuda",
       "low_vram": false,
-      "keep_models_loaded": false
+      "keep_models_loaded": true
     },
     "class_type": "Trellis2LoadModel",
     "_meta": {
@@ -68,7 +83,7 @@
   },
   "56:45": {
     "inputs": {
-      "seed": 454068640,
+      "seed": 1328402968,
       "pipeline_type": "1024_cascade",
       "sparse_structure_steps": 12,
       "sparse_structure_guidance_strength": 6.5,
@@ -126,7 +141,7 @@
   },
   "56:42": {
     "inputs": {
-      "target_face_num": 2000000,
+      "target_face_num": 80000,
       "method": "Cumesh",
       "mesh": [
         "56:51",
@@ -165,7 +180,7 @@
   },
   "56:57": {
     "inputs": {
-      "seed": 392,
+      "seed": 1883580982,
       "texture_steps": 12,
       "texture_guidance_strength": 3,
       "texture_guidance_rescale": 0.2,
@@ -196,20 +211,6 @@
     "class_type": "Trellis2MeshTexturing",
     "_meta": {
       "title": "Trellis2 - Mesh Texturing"
-    }
-  },
-  "56:19": {
-    "inputs": {
-      "filename_prefix": "wrestler",
-      "file_format": "glb",
-      "trimesh": [
-        "56:57",
-        0
-      ]
-    },
-    "class_type": "Trellis2ExportMesh",
-    "_meta": {
-      "title": "Trellis2 - Export Mesh"
     }
   }
 }
