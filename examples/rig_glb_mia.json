@@ -1,7 +1,7 @@
 {
   "41": {
     "inputs": {
-      "precision": "fp32",
+      "precision": "auto",
       "attn_backend": "auto"
     },
     "class_type": "MIALoadModel",

@@ -1010,6 +1010,14 @@ def rig_glb(
         None,
         help="Override MIAAutoRig reset_to_rest",
     ),
+    precision: str | None = typer.Option(
+        None,
+        help="Override MIALoadModel precision (auto, bf16, fp16, fp32)",
+    ),
+    attn_backend: str | None = typer.Option(
+        None,
+        help="Override MIALoadModel attention backend (auto, flash_attn, sdpa)",
+    ),
     poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
     timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
     verbose: bool = typer.Option(False, help="Show polling progress logs"),
@@ -1089,6 +1097,26 @@ def rig_glb(
                 "Could not find MIAAutoRig for reset_to_rest override."
             )
         changes.append(f"reset_to_rest={reset_to_rest} -> node {node_id}")
+
+    if precision is not None:
+        if precision not in {"auto", "bf16", "fp16", "fp32"}:
+            raise typer.BadParameter("precision must be one of: auto, bf16, fp16, fp32")
+        node_id = _set_input_on_first_node_by_class(
+            prompt, "MIALoadModel", "precision", precision
+        )
+        if node_id is None:
+            raise typer.BadParameter("Could not find MIALoadModel for precision override.")
+        changes.append(f"precision={precision} -> node {node_id}")
+
+    if attn_backend is not None:
+        if attn_backend not in {"auto", "flash_attn", "sdpa"}:
+            raise typer.BadParameter("attn_backend must be one of: auto, flash_attn, sdpa")
+        node_id = _set_input_on_first_node_by_class(
+            prompt, "MIALoadModel", "attn_backend", attn_backend
+        )
+        if node_id is None:
+            raise typer.BadParameter("Could not find MIALoadModel for attn_backend override.")
+        changes.append(f"attn_backend={attn_backend} -> node {node_id}")
 
     if changes:
         typer.echo("Applied overrides:")
@@ -1291,6 +1319,14 @@ def text_to_rigged_glb(
         None,
         help="Override MIAAutoRig reset_to_rest",
     ),
+    precision: str | None = typer.Option(
+        None,
+        help="Override MIALoadModel precision (auto, bf16, fp16, fp32)",
+    ),
+    attn_backend: str | None = typer.Option(
+        None,
+        help="Override MIALoadModel attention backend (auto, flash_attn, sdpa)",
+    ),
     poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
     timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
     verbose: bool = typer.Option(False, help="Show polling progress logs"),
@@ -1482,6 +1518,26 @@ def text_to_rigged_glb(
                 "Could not find MIAAutoRig for reset_to_rest override."
             )
         rig_changes.append(f"reset_to_rest={reset_to_rest} -> node {node_id}")
+
+    if precision is not None:
+        if precision not in {"auto", "bf16", "fp16", "fp32"}:
+            raise typer.BadParameter("precision must be one of: auto, bf16, fp16, fp32")
+        node_id = _set_input_on_first_node_by_class(
+            rig_prompt, "MIALoadModel", "precision", precision
+        )
+        if node_id is None:
+            raise typer.BadParameter("Could not find MIALoadModel for precision override.")
+        rig_changes.append(f"precision={precision} -> node {node_id}")
+
+    if attn_backend is not None:
+        if attn_backend not in {"auto", "flash_attn", "sdpa"}:
+            raise typer.BadParameter("attn_backend must be one of: auto, flash_attn, sdpa")
+        node_id = _set_input_on_first_node_by_class(
+            rig_prompt, "MIALoadModel", "attn_backend", attn_backend
+        )
+        if node_id is None:
+            raise typer.BadParameter("Could not find MIALoadModel for attn_backend override.")
+        rig_changes.append(f"attn_backend={attn_backend} -> node {node_id}")
 
     typer.echo("Applied overrides:")
     for c in rig_changes:
