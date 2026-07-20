@@ -185,11 +185,13 @@ def _apply_overrides(
 
     if filename_prefix is not None:
         found = _find_node_by_class(prompt, "Trellis2ExportMesh")
+        if not found:
+            found = _find_node_by_class(prompt, "Hy3DExportMesh")
         if not found or not _set_input_if_node(
             found[1], "filename_prefix", filename_prefix
         ):
             raise typer.BadParameter(
-                "Could not find Trellis2ExportMesh for filename_prefix override."
+                "Could not find Trellis2ExportMesh or Hy3DExportMesh for filename_prefix override."
             )
         changes.append(f"filename_prefix={filename_prefix} -> node {found[0]}")
 
