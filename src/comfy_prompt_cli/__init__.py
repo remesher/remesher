@@ -1014,6 +1014,10 @@ def rig_glb(
         None,
         help="Override MIAAutoRig target_face_count mesh simplification before export",
     ),
+    embed_textures: bool | None = typer.Option(
+        None,
+        help="Override MIAAutoRig embed_textures for the intermediate FBX export",
+    ),
     precision: str | None = typer.Option(
         None,
         help="Override MIALoadModel precision (auto, bf16, fp16, fp32)",
@@ -1111,6 +1115,14 @@ def rig_glb(
         if node_id is None:
             raise typer.BadParameter("Could not find MIAAutoRig for target_face_count override.")
         changes.append(f"target_face_count={target_face_count} -> node {node_id}")
+
+    if embed_textures is not None:
+        node_id = _set_input_on_first_node_by_class(
+            prompt, "MIAAutoRig", "embed_textures", embed_textures
+        )
+        if node_id is None:
+            raise typer.BadParameter("Could not find MIAAutoRig for embed_textures override.")
+        changes.append(f"embed_textures={embed_textures} -> node {node_id}")
 
     if precision is not None:
         if precision not in {"auto", "bf16", "fp16", "fp32"}:
@@ -1337,6 +1349,10 @@ def text_to_rigged_glb(
         None,
         help="Override MIAAutoRig target_face_count mesh simplification before export",
     ),
+    embed_textures: bool | None = typer.Option(
+        None,
+        help="Override MIAAutoRig embed_textures for the intermediate FBX export",
+    ),
     precision: str | None = typer.Option(
         None,
         help="Override MIALoadModel precision (auto, bf16, fp16, fp32)",
@@ -1546,6 +1562,14 @@ def text_to_rigged_glb(
         if node_id is None:
             raise typer.BadParameter("Could not find MIAAutoRig for target_face_count override.")
         rig_changes.append(f"target_face_count={target_face_count} -> node {node_id}")
+
+    if embed_textures is not None:
+        node_id = _set_input_on_first_node_by_class(
+            rig_prompt, "MIAAutoRig", "embed_textures", embed_textures
+        )
+        if node_id is None:
+            raise typer.BadParameter("Could not find MIAAutoRig for embed_textures override.")
+        rig_changes.append(f"embed_textures={embed_textures} -> node {node_id}")
 
     if precision is not None:
         if precision not in {"auto", "bf16", "fp16", "fp32"}:
