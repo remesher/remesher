@@ -2,7 +2,7 @@
   "41": {
     "inputs": {
       "precision": "fp16",
-      "attn_backend": "auto"
+      "attn_backend": "sdpa"
     },
     "class_type": "MIALoadModel",
     "_meta": {
