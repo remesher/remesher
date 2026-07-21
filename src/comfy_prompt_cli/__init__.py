@@ -1010,6 +1010,10 @@ def rig_glb(
         None,
         help="Override MIAAutoRig reset_to_rest",
     ),
+    target_face_count: int | None = typer.Option(
+        None,
+        help="Override MIAAutoRig target_face_count mesh simplification before export",
+    ),
     precision: str | None = typer.Option(
         None,
         help="Override MIALoadModel precision (auto, bf16, fp16, fp32)",
@@ -1097,6 +1101,16 @@ def rig_glb(
                 "Could not find MIAAutoRig for reset_to_rest override."
             )
         changes.append(f"reset_to_rest={reset_to_rest} -> node {node_id}")
+
+    if target_face_count is not None:
+        if target_face_count <= 0:
+            raise typer.BadParameter("target_face_count must be positive")
+        node_id = _set_input_on_first_node_by_class(
+            prompt, "MIAAutoRig", "target_face_count", target_face_count
+        )
+        if node_id is None:
+            raise typer.BadParameter("Could not find MIAAutoRig for target_face_count override.")
+        changes.append(f"target_face_count={target_face_count} -> node {node_id}")
 
     if precision is not None:
         if precision not in {"auto", "bf16", "fp16", "fp32"}:
@@ -1319,6 +1333,10 @@ def text_to_rigged_glb(
         None,
         help="Override MIAAutoRig reset_to_rest",
     ),
+    target_face_count: int | None = typer.Option(
+        None,
+        help="Override MIAAutoRig target_face_count mesh simplification before export",
+    ),
     precision: str | None = typer.Option(
         None,
         help="Override MIALoadModel precision (auto, bf16, fp16, fp32)",
@@ -1518,6 +1536,16 @@ def text_to_rigged_glb(
                 "Could not find MIAAutoRig for reset_to_rest override."
             )
         rig_changes.append(f"reset_to_rest={reset_to_rest} -> node {node_id}")
+
+    if target_face_count is not None:
+        if target_face_count <= 0:
+            raise typer.BadParameter("target_face_count must be positive")
+        node_id = _set_input_on_first_node_by_class(
+            rig_prompt, "MIAAutoRig", "target_face_count", target_face_count
+        )
+        if node_id is None:
+            raise typer.BadParameter("Could not find MIAAutoRig for target_face_count override.")
+        rig_changes.append(f"target_face_count={target_face_count} -> node {node_id}")
 
     if precision is not None:
         if precision not in {"auto", "bf16", "fp16", "fp32"}:
