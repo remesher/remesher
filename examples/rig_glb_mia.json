@@ -12,6 +12,7 @@
   "42": {
     "inputs": {
       "fbx_name": "rigged",
+      "output_format": "glb",
       "no_fingers": false,
       "use_normal": false,
       "reset_to_rest": false,
@@ -34,7 +35,7 @@
   "55": {
     "inputs": {
       "model_file": [
-        "92",
+        "42",
         0
       ],
       "image": ""
@@ -51,18 +52,6 @@
     "class_type": "Hy3DUploadMesh",
     "_meta": {
       "title": "Hy3D Upload Mesh"
-    }
-  },
-  "92": {
-    "inputs": {
-      "fbx_file_path": [
-        "42",
-        0
-      ]
-    },
-    "class_type": "BlenderFBXToGLB",
-    "_meta": {
-      "title": "Blender: FBX to GLB"
     }
   }
 }
