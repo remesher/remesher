@@ -222,12 +222,15 @@ setup_ollama() {
 
 start_jupyter() {
   local work="${WORKSPACE_ROOT:-/runpod-volume}"
+  export SHELL="${SHELL:-/bin/bash}"
   log "Starting JupyterLab from ${work} on :${JUPYTER_PORT:-8888}"
   jupyter lab \
     --ip=0.0.0.0 \
     --port "${JUPYTER_PORT:-8888}" \
     --no-browser \
     --allow-root \
+    --ServerApp.disable_check_xsrf="${JUPYTER_DISABLE_XSRF:-1}" \
+    --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' \
     --NotebookApp.token="${JUPYTER_TOKEN:-}" \
     --ServerApp.token="${JUPYTER_TOKEN:-}" \
     --notebook-dir "${work}" &
