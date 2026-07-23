@@ -5,6 +5,16 @@ log() {
   printf '[runpod-bootstrap] %s\n' "$*"
 }
 
+make_writable() {
+  # RunPod persistent volumes can preserve ownership/modes across image updates.
+  # Jupyter users need to be able to edit notebooks and write generated assets.
+  # Keep this best-effort so read-only/special mounts do not prevent startup.
+  for path in "$@"; do
+    [ -e "$path" ] || continue
+    chmod -R a+rwX "$path" 2>/dev/null || log "Could not chmod $path; continuing"
+  done
+}
+
 link_dir() {
   local src="$1"
   local dst="$2"
@@ -24,6 +34,7 @@ prepare_workspace() {
 
   mkdir -p "$work"/{models,custom_nodes,manager,u2net,output,workflows,input,repos,notebooks,remesher}
   mkdir -p /root
+  make_writable "$work/models" "$work/output" "$work/workflows" "$work/input" "$work/notebooks" "$work/remesher"
 
   rm -rf /root/.u2net || true
   ln -sfnT "$work/u2net" /root/.u2net
@@ -36,6 +47,7 @@ stage_demo_notebooks() {
   if [ -d /app/remesher ]; then
     mkdir -p "$work/remesher"
     cp -rn /app/remesher/. "$work/remesher/" 2>/dev/null || true
+    make_writable "$work/remesher" "$work/notebooks" "$work/input" "$work/output"
   fi
 }
 
@@ -108,6 +120,8 @@ setup_remesher_cli() {
   if [ -f "$repo_dir/config.json" ]; then
     sed -i 's#"server_url"[[:space:]]*:[[:space:]]*"[^"]*"#"server_url": "http://127.0.0.1:8188/"#' "$repo_dir/config.json" || true
   fi
+
+  make_writable "$repo_dir"
 }
 
 run_model_download() {
@@ -238,6 +252,7 @@ run_model_download
 start_vlm
 setup_ollama
 setup_hermes_agent
+make_writable "${WORKSPACE_ROOT:-/runpod-volume}"/remesher "${WORKSPACE_ROOT:-/runpod-volume}"/input "${WORKSPACE_ROOT:-/runpod-volume}"/output "${WORKSPACE_ROOT:-/runpod-volume}"/notebooks
 start_hermes
 start_jupyter
 
