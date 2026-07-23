@@ -27,6 +27,15 @@ def _ensure_repo_on_path() -> None:
             sys.path.insert(0, str(path))
 
 
+def _import_anatomical_skinning():
+    _ensure_repo_on_path()
+    try:
+        from nodes import anatomical_skinning  # noqa: PLC0415
+    except ModuleNotFoundError:
+        import anatomical_skinning  # noqa: PLC0415
+    return anatomical_skinning
+
+
 def _action_summary(action) -> dict | None:
     if action is None:
         return None
@@ -314,7 +323,7 @@ def _motion_component_diagnostics(
 ) -> dict:
     """Find small pelvis/hip components whose motion disagrees with nearby skeleton motion."""
 
-    from nodes.anatomical_skinning import matching_zones  # noqa: PLC0415
+    matching_zones = _import_anatomical_skinning().matching_zones
 
     if len(frames) < 2 or armature is None:
         return {"frames": frames, "candidates": [], "reason": "need_at_least_two_frames_and_armature"}
@@ -423,7 +432,7 @@ def _motion_component_diagnostics(
 def _component_diagnostics(mesh_obj, armature, mins, maxs, x_policy_multiplier: float, specs) -> dict:
     """Summarize disconnected mesh islands by topology and nearest skeleton bone."""
 
-    from nodes.anatomical_skinning import matching_zones  # noqa: PLC0415
+    matching_zones = _import_anatomical_skinning().matching_zones
 
     components = _connected_components(mesh_obj)
     report: dict = {
@@ -585,7 +594,9 @@ def cleanup_glb(
 ) -> dict:
     _ensure_repo_on_path()
     import bpy  # noqa: PLC0415
-    from nodes.anatomical_skinning import default_zone_specs, repair_plan_for_vertex  # noqa: PLC0415
+    anatomical_skinning = _import_anatomical_skinning()
+    default_zone_specs = anatomical_skinning.default_zone_specs
+    repair_plan_for_vertex = anatomical_skinning.repair_plan_for_vertex
 
     input_glb = Path(input_glb_path)
     output_glb = Path(output_glb_path)

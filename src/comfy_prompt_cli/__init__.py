@@ -4,6 +4,8 @@ import asyncio
 import importlib
 import json
 import mimetypes
+import subprocess
+import sys
 import uuid
 from pathlib import Path
 from typing import Any
@@ -1164,6 +1166,209 @@ def rig_glb(
         return
     for path in downloaded:
         typer.echo(f"Downloaded {path}")
+
+
+def _run_worker_command(args: list[str], *, cwd: Path | None = None) -> None:
+    """Run an isolated worker and stream output without swallowing failures."""
+    try:
+        completed = subprocess.run(args, cwd=cwd, text=True, check=False)
+    except FileNotFoundError as exc:
+        raise typer.BadParameter(f"Worker executable not found: {args[0]}") from exc
+    if completed.returncode != 0:
+        raise typer.Exit(completed.returncode)
+
+
+def _python_has_bpy() -> bool:
+    completed = subprocess.run(
+        [sys.executable, "-c", "import bpy"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    return completed.returncode == 0
+
+
+def _copy_to_container(container: str, source: Path, dest: str) -> None:
+    _run_worker_command(["docker", "cp", str(source), f"{container}:{dest}"])
+
+
+def _copy_from_container(container: str, source: str, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    _run_worker_command(["docker", "cp", f"{container}:{source}", str(dest)])
+
+
+def _run_bpy_worker(
+    *,
+    worker_file: Path,
+    positional_inputs: list[Path],
+    positional_outputs: list[Path],
+    extra_args: list[str],
+    summary_json: Path,
+    bpy_container: str,
+) -> None:
+    """Run a bpy worker locally when possible; otherwise use the Comfy3D sibling container.
+
+    The Remesher Docker image is intentionally a Jupyter/control image and does not bundle
+    Blender/bpy. The sibling Comfy3D runtime does, so notebooks can still invoke these
+    existing script-backed workers through the same comfy-prompt-cli command.
+    """
+    if _python_has_bpy():
+        cmd = [
+            sys.executable,
+            str(worker_file),
+            *[str(path) for path in positional_inputs],
+            *[str(path) for path in positional_outputs],
+            *extra_args,
+            "--summary-json",
+            str(summary_json),
+        ]
+        _run_worker_command(cmd)
+        return
+
+    try:
+        subprocess.run(["docker", "inspect", bpy_container], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        raise typer.BadParameter(
+            "Local Python cannot import bpy and the Comfy3D bpy container is not available: "
+            f"{bpy_container}. Start it first or pass --bpy-container."
+        ) from exc
+
+    remote_dir = f"/tmp/remesher-bpy-worker-{uuid.uuid4().hex}"
+    remote_script_dir = f"{remote_dir}/docker/demo-jupyter/scripts"
+    _run_worker_command(["docker", "exec", bpy_container, "mkdir", "-p", remote_script_dir])
+    remote_worker = f"{remote_script_dir}/{worker_file.name}"
+    _copy_to_container(bpy_container, worker_file, remote_worker)
+    helper = worker_file.with_name("anatomical_skinning.py")
+    if helper.exists():
+        _copy_to_container(bpy_container, helper, f"{remote_script_dir}/{helper.name}")
+
+    remote_inputs: list[str] = []
+    for index, source in enumerate(positional_inputs):
+        remote_path = f"{remote_dir}/input_{index}_{source.name}"
+        _copy_to_container(bpy_container, source, remote_path)
+        remote_inputs.append(remote_path)
+
+    remote_outputs = [f"{remote_dir}/output_{index}_{dest.name}" for index, dest in enumerate(positional_outputs)]
+    remote_summary = f"{remote_dir}/{summary_json.name}"
+    try:
+        _run_worker_command(
+            [
+                "docker",
+                "exec",
+                bpy_container,
+                "python",
+                remote_worker,
+                *remote_inputs,
+                *remote_outputs,
+                *extra_args,
+                "--summary-json",
+                remote_summary,
+            ]
+        )
+        for remote_path, local_path in zip(remote_outputs, positional_outputs, strict=True):
+            _copy_from_container(bpy_container, remote_path, local_path)
+        _copy_from_container(bpy_container, remote_summary, summary_json)
+    finally:
+        subprocess.run(["docker", "exec", bpy_container, "rm", "-rf", remote_dir], check=False)
+
+
+@app.command("skin-cleanup-glb")
+def skin_cleanup_glb(
+    input_glb: Path = typer.Option(..., "--input-glb", help="Rigged GLB to clean"),
+    output_name: str = typer.Option(..., help="Output GLB basename without extension"),
+    out_dir: Path = typer.Option(Path("downloads"), help="Directory for cleaned GLB and summary JSON"),
+    mode: str = typer.Option("conservative", help="Cleanup mode: diagnostic, conservative, motion-diagnostic, or component-repair"),
+    repair_zones: str = typer.Option("head_top,head_neck,left_hip,right_hip", help="Comma-separated repair zones"),
+    max_fraction_per_zone: float = typer.Option(0.03, min=0.0, help="Maximum repaired vertex fraction per zone"),
+    motion_frames: str = typer.Option("0,16,24,32", help="Comma-separated frames for motion diagnostics"),
+    max_motion_component_size: int = typer.Option(64, min=1, help="Max connected-component size for motion diagnostics"),
+    component_repair_ids: str = typer.Option("", help="Comma-separated connected-component IDs for component-repair mode"),
+    component_repair_weights: str = typer.Option("RightUpLeg=0.62,Hips=0.38", help="Comma-separated bone=weight list for component-repair mode"),
+    worker_file: Path = typer.Option(Path("docker/demo-jupyter/scripts/anatomical_cleanup_worker.py"), help="Path to isolated cleanup worker script"),
+    bpy_container: str = typer.Option("remesher-comfy3d", help="Docker container to use when local Python cannot import bpy"),
+    no_validate: bool = typer.Option(False, help="Skip reimport validation in the worker"),
+) -> None:
+    """Clean anatomical skin weights in a rigged GLB using the isolated bpy worker."""
+    if not input_glb.exists() or not input_glb.is_file():
+        raise typer.BadParameter(f"Input GLB not found: {input_glb}")
+    if not worker_file.exists() or not worker_file.is_file():
+        raise typer.BadParameter(f"Worker file not found: {worker_file}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    output_glb = out_dir / f"{output_name}.glb"
+    summary_json = out_dir / f"{output_name}.skin_cleanup.json"
+    extra_args = [
+        "--mode",
+        mode,
+        "--max-fraction-per-zone",
+        str(max_fraction_per_zone),
+        "--repair-zones",
+        repair_zones,
+        "--motion-frames",
+        motion_frames,
+        "--max-motion-component-size",
+        str(max_motion_component_size),
+        "--component-repair-ids",
+        component_repair_ids,
+        "--component-repair-weights",
+        component_repair_weights,
+    ]
+    if no_validate:
+        extra_args.append("--no-validate")
+    _run_bpy_worker(
+        worker_file=worker_file,
+        positional_inputs=[input_glb],
+        positional_outputs=[output_glb],
+        extra_args=extra_args,
+        summary_json=summary_json,
+        bpy_container=bpy_container,
+    )
+    if not output_glb.exists():
+        raise typer.BadParameter(f"Cleanup worker completed but did not create {output_glb}")
+    typer.echo(f"Cleaned GLB: {output_glb}")
+    typer.echo(f"Summary JSON: {summary_json}")
+
+
+@app.command("retarget-glb")
+def retarget_glb(
+    rigged_glb: Path = typer.Option(..., "--rigged-glb", help="Rigged GLB to animate"),
+    animation: Path = typer.Option(..., "--animation", help="Mixamo FBX animation source"),
+    glb_name: str = typer.Option(..., help="Output GLB basename without extension"),
+    out_dir: Path = typer.Option(Path("downloads"), help="Directory for animated GLB and summary JSON"),
+    worker_file: Path = typer.Option(Path("docker/demo-jupyter/scripts/arp_retarget_worker.py"), help="Path to isolated ARP retarget worker script"),
+    bpy_container: str = typer.Option("remesher-comfy3d", help="Docker container to use when local Python cannot import bpy/Auto-Rig Pro"),
+    frame_start: int | None = typer.Option(None, help="Override animation start frame"),
+    frame_end: int | None = typer.Option(None, help="Override animation end frame; <=0 uses source action end"),
+    no_validate: bool = typer.Option(False, help="Skip reimport validation in the worker"),
+) -> None:
+    """Retarget a Mixamo FBX animation onto a rigged GLB using the isolated ARP worker."""
+    if not rigged_glb.exists() or not rigged_glb.is_file():
+        raise typer.BadParameter(f"Rigged GLB not found: {rigged_glb}")
+    if not animation.exists() or not animation.is_file():
+        raise typer.BadParameter(f"Animation FBX not found: {animation}")
+    if not worker_file.exists() or not worker_file.is_file():
+        raise typer.BadParameter(f"Worker file not found: {worker_file}")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    output_glb = out_dir / f"{glb_name}.glb"
+    summary_json = out_dir / f"{glb_name}.retarget.json"
+    extra_args = []
+    if frame_start is not None:
+        extra_args.extend(["--frame-start", str(frame_start)])
+    if frame_end is not None:
+        extra_args.extend(["--frame-end", str(frame_end)])
+    if no_validate:
+        extra_args.append("--no-validate")
+    _run_bpy_worker(
+        worker_file=worker_file,
+        positional_inputs=[rigged_glb, animation],
+        positional_outputs=[output_glb],
+        extra_args=extra_args,
+        summary_json=summary_json,
+        bpy_container=bpy_container,
+    )
+    if not output_glb.exists():
+        raise typer.BadParameter(f"Retarget worker completed but did not create {output_glb}")
+    typer.echo(f"Animated GLB: {output_glb}")
+    typer.echo(f"Summary JSON: {summary_json}")
 
 
 @app.command("text-to-glb")
