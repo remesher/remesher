@@ -16,8 +16,8 @@
       "no_fingers": false,
       "use_normal": false,
       "reset_to_rest": false,
-      "target_face_count": 50000,
-      "embed_textures": false,
+      "target_face_count": 80000,
+      "embed_textures": true,
       "trimesh": [
         "57",
         0

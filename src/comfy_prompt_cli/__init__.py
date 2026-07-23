@@ -1013,12 +1013,12 @@ def rig_glb(
         help="Override MIAAutoRig reset_to_rest",
     ),
     target_face_count: int | None = typer.Option(
-        None,
-        help="Override MIAAutoRig target_face_count mesh simplification before export",
+        80000,
+        help="Override MIAAutoRig target_face_count mesh simplification before export; default 80000 preserves Trellis textures in current MIA smokes",
     ),
     embed_textures: bool | None = typer.Option(
-        None,
-        help="Override MIAAutoRig embed_textures for the intermediate FBX export",
+        True,
+        help="Override MIAAutoRig embed_textures for the intermediate FBX export; enabled by default to preserve textured GLBs",
     ),
     precision: str | None = typer.Option(
         None,
@@ -1551,12 +1551,12 @@ def text_to_rigged_glb(
         help="Override MIAAutoRig reset_to_rest",
     ),
     target_face_count: int | None = typer.Option(
-        None,
-        help="Override MIAAutoRig target_face_count mesh simplification before export",
+        80000,
+        help="Override MIAAutoRig target_face_count mesh simplification before export; default 80000 preserves Trellis textures in current MIA smokes",
     ),
     embed_textures: bool | None = typer.Option(
-        None,
-        help="Override MIAAutoRig embed_textures for the intermediate FBX export",
+        True,
+        help="Override MIAAutoRig embed_textures for the intermediate FBX export; enabled by default to preserve textured GLBs",
     ),
     precision: str | None = typer.Option(
         None,
