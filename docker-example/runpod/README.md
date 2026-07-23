@@ -2,20 +2,26 @@
 
 This folder defines the Docker image published as `michaelgold/remesher`.
 
-The image is a **Remesher notebook/control environment**, not the Comfy3D runtime itself:
+The RunPod image is a **combined Remesher + Comfy3D notebook environment**:
 
-- Builds from `nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04`
+- Builds from `michaelgold/comfy3d:latest`
+- Starts ComfyUI/Comfy3D inside the same container on port `8188`
 - Starts JupyterLab on port `8888`
 - Stages the Remesher demo notebooks into `/workspace/remesher/notebooks`
 - Stages helper scripts under `/workspace/remesher/docker/demo-jupyter/scripts`
 - Installs the Remesher CLI into the image venv
-- Includes the Docker CLI/Python Docker SDK so notebooks can pull and run `michaelgold/comfy3d`
 - Includes Ollama/Gemma4 prep scripts for notebook 04
 
-The notebooks intentionally start/pull the Comfy3D container themselves, for example via:
+The notebooks no longer require a Docker socket on RunPod. The setup cell:
 
 ```bash
 bash docker/demo-jupyter/scripts/pull-comfy3d.sh
+```
+
+now waits for the in-container ComfyUI endpoint and writes `config.json` with:
+
+```json
+{"server_url": "http://127.0.0.1:8188/"}
 ```
 
 ## Local smoke run
@@ -27,7 +33,6 @@ docker run --gpus all --rm -it \
   -p 8888:8888 \
   -p 8188:8188 \
   -p 8080:8080 \
-  -v /var/run/docker.sock:/var/run/docker.sock \
   -v "$PWD/workspace:/workspace" \
   michaelgold/remesher:local
 ```
@@ -38,32 +43,46 @@ Open Jupyter and run:
 /workspace/remesher/notebooks/01_comfy3d_remesher_cli.ipynb
 ```
 
-## Important runtime mount
+## Comfy3D endpoint behavior
 
-For the notebook to pull/run `michaelgold/comfy3d`, the container needs access to the host Docker socket:
+Default RunPod behavior is in-container ComfyUI:
+
+```text
+http://127.0.0.1:8188/
+```
+
+If you want to use a separate Comfy3D/ComfyUI service instead, set one of:
+
+```bash
+export COMFY3D_SERVER_URL="https://<your-comfy3d-endpoint>/"
+export COMFYUI_SERVER_URL="https://<your-comfy3d-endpoint>/"
+```
+
+Then rerun:
+
+```bash
+bash docker/demo-jupyter/scripts/pull-comfy3d.sh
+```
+
+The script health-checks `${URL}/system_stats`, writes the URL to `config.json`, and skips local Docker/sibling-container behavior.
+
+## Docker socket fallback
+
+Older/local control-image deployments may still use `pull-comfy3d.sh` to launch a sibling `michaelgold/comfy3d` container through Docker. That path still exists as a fallback, but the RunPod image should not need it.
+
+For that legacy path only, Docker daemon access requires:
 
 ```text
 -v /var/run/docker.sock:/var/run/docker.sock
 ```
 
-RunPod templates should expose that socket or use an equivalent Docker-in-Docker/control-plane setup.
-
-The image includes the Docker CLI, and CI verifies the client is installed. The common RunPod failure is not a missing
-`docker` binary; it is a missing Docker daemon/socket, for example:
+The common failure:
 
 ```text
 failed to connect to the docker API at unix:///var/run/docker.sock: no such file or directory
 ```
 
-If your RunPod template cannot expose `/var/run/docker.sock`, start Comfy3D separately and point the notebooks at it:
-
-```bash
-export COMFY3D_SERVER_URL="https://<your-comfy3d-endpoint>/"
-bash docker/demo-jupyter/scripts/pull-comfy3d.sh
-```
-
-When `COMFY3D_SERVER_URL` or `COMFYUI_SERVER_URL` is set, `pull-comfy3d.sh` health-checks that endpoint, writes it to
-`config.json`, and skips Docker.
+means the Docker CLI is installed but the daemon/socket is unavailable. Recreate with the current combined `michaelgold/remesher` image instead of trying to mount Docker on RunPod when possible.
 
 ## Ollama / Gemma4
 
@@ -73,7 +92,7 @@ Notebook 04 uses:
 bash docker/demo-jupyter/scripts/ollama-gemma4.sh
 ```
 
-By default, the container does **not** pull Gemma4 at startup. To preinstall it on boot:
+Ollama/Gemma runs directly inside the container; it does **not** require Docker. By default, the container does not pull Gemma4 at startup. To preinstall it on boot:
 
 ```bash
 -e OLLAMA_PREP_ON_START=1 -e OLLAMA_MODEL=gemma4
@@ -86,14 +105,14 @@ By default, the container does **not** pull Gemma4 at startup. To preinstall it 
 | `WORKSPACE_ROOT` | `/workspace` |
 | `JUPYTER_PORT` | `8888` |
 | `JUPYTER_TOKEN` | unset; may be passed at runtime |
-| `COMFY3D_IMAGE` | `michaelgold/comfy3d:latest` |
-| `COMFY3D_CONTAINER` | `comfy3d` |
-| `COMFY3D_SERVER_URL` | unset; use an already-running Comfy3D/ComfyUI endpoint instead of Docker |
+| `COMFY_PORT` | `8188` |
+| `COMFY3D_SERVER_URL` | `http://127.0.0.1:8188/` |
+| `RUNPOD_COMBINED_COMFY3D` | `1` |
+| `COMFY3D_START_ON_BOOT` | `1` |
 | `OLLAMA_PREP_ON_START` | `0` |
 | `OLLAMA_MODEL` | `gemma4` |
 
 ## Notes
 
-- This image intentionally does not inherit from `michaelgold/comfy3d`.
-- Comfy3D is pulled/run by the notebooks so it can remain separately versioned and cached.
 - Protected Hugging Face downloads still require `HF_TOKEN` in the notebook/session environment.
+- `/workspace/models`, `/workspace/input`, `/workspace/output`, and `/workspace/custom_nodes` are persistent/writable when backed by a RunPod volume.
