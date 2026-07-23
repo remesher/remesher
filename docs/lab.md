@@ -392,7 +392,7 @@ A successful lab run should produce:
 - **Missing node/model errors:** install the ComfyUI custom nodes and model weights required by the selected workflow.
 - **Hugging Face gated model errors:** paste a valid read token starting with `hf_` and request access to gated model repositories before rerunning the downloader.
 - **No GLB output:** inspect the ComfyUI prompt history for the submitted prompt ID and confirm the workflow writes a `.glb` artifact.
-- **GLB has no textures after rigging:** rerun `rig-glb` with `--embed-textures` and consider increasing `--target-face-count`.
+- **GLB has no textures after rigging:** use the texture-preserving rig defaults (`--target-face-count 80000 --embed-textures`) or raise `--target-face-count` for already-high-resolution source meshes; avoid the old `50000`/no-embed path because it can strip `TEXCOORD_0`, materials, images, and textures.
 - **Animated head/neck deformation:** run the conservative `skin-cleanup-glb` step for `head_top,head_neck` before retargeting.
 - **Large artifacts:** reduce target face count or texture size when moving outputs through size-limited channels.
 
