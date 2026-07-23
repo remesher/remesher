@@ -234,6 +234,8 @@ start_jupyter() {
     --no-browser \
     --allow-root \
     --ServerApp.disable_check_xsrf="${JUPYTER_DISABLE_XSRF:-1}" \
+    --ServerApp.allow_origin="${JUPYTER_ALLOW_ORIGIN:-*}" \
+    --ServerApp.allow_remote_access=True \
     --ServerApp.terminado_settings='{"shell_command":["/bin/bash"]}' \
     --NotebookApp.token="${JUPYTER_TOKEN:-}" \
     --ServerApp.token="${JUPYTER_TOKEN:-}" \
