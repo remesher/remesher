@@ -1,50 +1,81 @@
-# RunPod Single-Image Template
+# Remesher RunPod / Jupyter Docker Image
 
-This folder provides a RunPod-friendly, single Docker image setup (no docker-compose) that:
+This folder defines the Docker image published as `michaelgold/remesher`.
 
-- Starts Comfy3D (`michaelgold/comfy3d`) on port `8188`
-- Starts a Gemma 4 backend on port `8080` (llama.cpp binary if available, otherwise `llama-cpp-python` server)
-- Clones and installs `github.com/remesher/remesher` so Hermes can call the remesher CLI
-- Clones and installs Hermes Agent from `https://github.com/NousResearch/hermes-agent` on startup
-- Starts Hermes with either your command (`HERMES_START_COMMAND`) or the default `hermes`
-- Downloads models from:
-  - `https://github.com/michaelgold/ComfyUI-HF-Model-Downloader/blob/main/model_config.json`
-  into the persistent RunPod volume-backed models directory
+The image is a **Remesher notebook/control environment**, not the Comfy3D runtime itself:
 
-## Build
+- Builds from `nvidia/cuda:13.0.2-cudnn-runtime-ubuntu24.04`
+- Starts JupyterLab on port `8888`
+- Stages the Remesher demo notebooks into `/workspace/remesher/notebooks`
+- Stages helper scripts under `/workspace/remesher/docker/demo-jupyter/scripts`
+- Installs the Remesher CLI into the image venv
+- Includes the Docker CLI/Python Docker SDK so notebooks can pull and run `michaelgold/comfy3d`
+- Includes Ollama/Gemma4 prep scripts for notebook 04
+
+The notebooks intentionally start/pull the Comfy3D container themselves, for example via:
 
 ```bash
-docker build -t remesher-runpod -f docker-example/runpod/Dockerfile docker-example/runpod
+bash docker/demo-jupyter/scripts/pull-comfy3d.sh
 ```
 
-## Run (local example)
+## Local smoke run
 
 ```bash
+docker build -t michaelgold/remesher:local -f docker-example/runpod/Dockerfile .
+
 docker run --gpus all --rm -it \
+  -p 8888:8888 \
   -p 8188:8188 \
   -p 8080:8080 \
-  -e HERMES_START_COMMAND="<your hermes startup command>" \
-  -e VLM_MODEL_PATH="/runpod-volume/models/vlm/gemma-4-e4b-it-gguf/gemma-4-e4b-it-Q4_K_M.gguf" \
-  -v /path/to/runpod-volume:/runpod-volume \
-  remesher-runpod
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v "$PWD/workspace:/workspace" \
+  michaelgold/remesher:local
 ```
 
-## Important Env Vars
+Open Jupyter and run:
 
-- `HERMES_INSTALL_ON_START`: Defaults to `1`; set `0` to skip Hermes clone/install.
-- `HERMES_REPO_URL`: Defaults to `https://github.com/NousResearch/hermes-agent.git`.
-- `HERMES_DIR`: Defaults to `/runpod-volume/hermes`.
-- `HERMES_START_COMMAND`: Optional. If unset, the entrypoint runs `hermes`.
-- `HERMES_MODEL_BASE_URL`: Defaults to `http://127.0.0.1:8080/v1`.
-- `HERMES_MODEL_API_KEY`: Defaults to `dummy`.
-- `VLM_MODEL_PATH`: Path to your Gemma 4 GGUF model.
-- `MODEL_CONFIG_URL`: Defaults to the upstream `model_config.json` URL.
-- `ALLOW_PROTECTED_MODELS`: `0` by default. Set to `1` only if you accept/download protected models and have valid HF auth.
-- `COMFY_MODELS_DIR`: Defaults to `/app/comfy/models` (symlinked to volume-backed storage).
+```text
+/workspace/remesher/notebooks/01_comfy3d_remesher_cli.ipynb
+```
+
+## Important runtime mount
+
+For the notebook to pull/run `michaelgold/comfy3d`, the container needs access to the host Docker socket:
+
+```text
+-v /var/run/docker.sock:/var/run/docker.sock
+```
+
+RunPod templates should expose that socket or use an equivalent Docker-in-Docker/control-plane setup.
+
+## Ollama / Gemma4
+
+Notebook 04 uses:
+
+```bash
+bash docker/demo-jupyter/scripts/ollama-gemma4.sh
+```
+
+By default, the container does **not** pull Gemma4 at startup. To preinstall it on boot:
+
+```bash
+-e OLLAMA_PREP_ON_START=1 -e OLLAMA_MODEL=gemma4
+```
+
+## Environment defaults
+
+| Variable | Default |
+| --- | --- |
+| `WORKSPACE_ROOT` | `/workspace` |
+| `JUPYTER_PORT` | `8888` |
+| `JUPYTER_TOKEN` | unset; may be passed at runtime |
+| `COMFY3D_IMAGE` | `michaelgold/comfy3d:latest` |
+| `COMFY3D_CONTAINER` | `comfy3d` |
+| `OLLAMA_PREP_ON_START` | `0` |
+| `OLLAMA_MODEL` | `gemma4` |
 
 ## Notes
 
-- This image is intentionally a bootstrap wrapper around `michaelgold/comfy3d:latest`.
-- Hermes is installed from source at pod startup with `pip/uv pip install -e` in `HERMES_DIR`.
-- If your preferred Hermes run mode needs extra flags (for example gateway mode), set `HERMES_START_COMMAND`.
-- For private/protected Hugging Face models, provide `HF_TOKEN` in the pod environment.
+- This image intentionally does not inherit from `michaelgold/comfy3d`.
+- Comfy3D is pulled/run by the notebooks so it can remain separately versioned and cached.
+- Protected Hugging Face downloads still require `HF_TOKEN` in the notebook/session environment.
