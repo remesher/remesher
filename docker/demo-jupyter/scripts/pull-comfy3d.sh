@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
-IMAGE="${COMFY3D_IMAGE:-michaelgold/comfy3d:latest}"
-NAME="${COMFY3D_CONTAINER:-remesher-comfy3d}"
-PORT="${COMFY3D_PORT:-8188}"
-MODELS_DIR="${COMFY3D_MODELS_DIR:-/workspace/models/comfyui}"
-OUTPUT_DIR="${COMFY3D_OUTPUT_DIR:-/workspace/output/comfyui}"
-INPUT_DIR="${COMFY3D_INPUT_DIR:-/workspace/input}"
+
+PORT="${COMFY3D_PORT:-${COMFY_PORT:-8188}}"
 CONFIG_PATH="${REMESHER_CONFIG_PATH:-config.json}"
+LOCAL_URL="${COMFY3D_SERVER_URL:-${COMFYUI_SERVER_URL:-${COMFY_SERVER_URL:-http://127.0.0.1:${PORT}/}}}"
 
 normalize_url() {
   local url="$1"
@@ -41,6 +38,32 @@ print(f'Configured ComfyUI server_url: {url}')
 PY
 }
 
+wait_for_comfy_url() {
+  local url="$1"
+  local attempts="${COMFY3D_WAIT_ATTEMPTS:-180}"
+  local sleep_s="${COMFY3D_WAIT_SLEEP:-2}"
+  echo "Waiting for ComfyUI/Comfy3D at $(normalize_url "$url")system_stats ..."
+  for _ in $(seq 1 "$attempts"); do
+    if check_comfy_url "$url"; then
+      echo "ComfyUI/Comfy3D is reachable."
+      write_config_url "$url"
+      exit 0
+    fi
+    sleep "$sleep_s"
+  done
+  echo "ComfyUI/Comfy3D did not become reachable at $(normalize_url "$url")system_stats" >&2
+  return 1
+}
+
+# RunPod's current default image is a combined Remesher+Comfy3D container.
+# ComfyUI is started by /app/runpod/entrypoint.sh, so the notebook setup cell
+# only has to wait for the local service and write config.json.
+if [[ "${RUNPOD_COMBINED_COMFY3D:-0}" == "1" ]] || [[ -d /app/comfy && -f /app/comfy/main.py ]]; then
+  wait_for_comfy_url "$LOCAL_URL"
+fi
+
+# Backward-compatible fallback for old/local control-image deployments: if an
+# external URL is set, use it and skip Docker.
 external_url="${COMFY3D_SERVER_URL:-${COMFYUI_SERVER_URL:-${COMFY_SERVER_URL:-}}}"
 if [[ -n "$external_url" ]]; then
   echo "Using externally supplied Comfy3D/ComfyUI server: $external_url"
@@ -52,14 +75,24 @@ if [[ -n "$external_url" ]]; then
   exit 1
 fi
 
+IMAGE="${COMFY3D_IMAGE:-michaelgold/comfy3d:latest}"
+NAME="${COMFY3D_CONTAINER:-remesher-comfy3d}"
+MODELS_DIR="${COMFY3D_MODELS_DIR:-/workspace/models/comfyui}"
+OUTPUT_DIR="${COMFY3D_OUTPUT_DIR:-/workspace/output/comfyui}"
+INPUT_DIR="${COMFY3D_INPUT_DIR:-/workspace/input}"
+
 if ! command -v docker >/dev/null 2>&1; then
   cat >&2 <<'EOF'
 Docker CLI is not installed in this notebook container.
 
-This Remesher notebook image is a control/Jupyter image. Labs 1-3 start the separate
-michaelgold/comfy3d runtime with Docker, so they require either:
+Older Remesher control-image deployments start michaelgold/comfy3d with Docker,
+so they require either:
   1. a mounted Docker socket at /var/run/docker.sock, or
   2. an already-running Comfy3D/ComfyUI server and COMFY3D_SERVER_URL set to its URL.
+
+Current RunPod images should inherit from michaelgold/comfy3d and start ComfyUI
+in-container. If you see this on RunPod, recreate the pod with the latest
+michaelgold/remesher image.
 EOF
   exit 2
 fi
@@ -68,25 +101,17 @@ if ! docker info >/dev/null 2>&1; then
   cat >&2 <<'EOF'
 Docker is available, but this notebook container cannot connect to a Docker daemon.
 
-Expected for the built-in RunPod notebook flow:
-  /var/run/docker.sock mounted into the pod/container
+Older Remesher control-image deployments need /var/run/docker.sock mounted to
+launch a sibling michaelgold/comfy3d container.
 
-Your error usually means the RunPod template/pod was launched without Docker socket access.
-Relaunch with a template that exposes the Docker socket or mount:
-  /var/run/docker.sock:/var/run/docker.sock
-
-Alternative: start michaelgold/comfy3d separately and set one of these before this cell:
-  COMFY3D_SERVER_URL=https://<your-comfy3d-endpoint>/
-  COMFYUI_SERVER_URL=https://<your-comfy3d-endpoint>/
-
-Then rerun this cell; the script will write config.json to that external server and skip Docker.
+Current RunPod images no longer require Docker-in-notebook: they inherit from
+michaelgold/comfy3d and start ComfyUI inside the same container. Recreate the pod
+with the latest michaelgold/remesher image, or set COMFY3D_SERVER_URL to an
+already-running Comfy3D endpoint.
 EOF
   exit 2
 fi
 
-# When this script runs inside the Jupyter container against the host Docker
-# socket, docker run bind mounts must use host paths, not container paths.
-# Resolve the host-side repo mount for /workspace/remesher automatically.
 if [[ "$MODELS_DIR" == /workspace/* || "$OUTPUT_DIR" == /workspace/* || "$INPUT_DIR" == /workspace/* ]]; then
   REPO_HOST_PATH="$(docker inspect "${HOSTNAME:-}" --format '{{range .Mounts}}{{if eq .Destination "/workspace/remesher"}}{{.Source}}{{end}}{{end}}' 2>/dev/null || true)"
   if [[ -n "$REPO_HOST_PATH" ]]; then
@@ -113,14 +138,8 @@ docker run -d --name "$NAME" "${GPU_ARGS[@]}" \
   -v "$OUTPUT_DIR:/workspace/ComfyUI/output" \
   -e HF_TOKEN="${HF_TOKEN:-}" \
   "$IMAGE"
-echo "Waiting for ComfyUI /system_stats..."
-for i in $(seq 1 180); do
-  if curl -fsS "http://host.docker.internal:${PORT}/system_stats" >/dev/null 2>&1 || curl -fsS "http://127.0.0.1:${PORT}/system_stats" >/dev/null 2>&1; then
-    echo "ComfyUI is reachable."
-    exit 0
-  fi
-  sleep 2
-done
-echo "ComfyUI did not become reachable. Last logs:" >&2
-docker logs --tail=240 "$NAME" >&2 || true
-exit 1
+wait_for_comfy_url "http://127.0.0.1:${PORT}/" || {
+  echo "ComfyUI did not become reachable. Last logs:" >&2
+  docker logs --tail=240 "$NAME" >&2 || true
+  exit 1
+}

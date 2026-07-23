@@ -36,6 +36,17 @@ prepare_workspace() {
   mkdir -p /root
   make_writable "$work/models" "$work/output" "$work/workflows" "$work/input" "$work/notebooks" "$work/remesher"
 
+  # This image inherits from michaelgold/comfy3d, so keep ComfyUI's persistent
+  # directories on /workspace instead of launching a sibling Docker container.
+  # Preserve the Comfy3D base image's bundled nodes by moving them into the
+  # persistent volume on first boot, matching its /app/utils/init.sh behavior.
+  link_dir /app/comfy/models "$work/models"
+  link_dir /app/comfy/custom_nodes "$work/custom_nodes"
+  link_dir /app/comfy/output "$work/output"
+  link_dir /app/comfy/input "$work/input"
+  mkdir -p /app/comfy/user/default
+  link_dir /app/comfy/user/default/ComfyUI-Manager "$work/manager"
+
   rm -rf /root/.u2net || true
   ln -sfnT "$work/u2net" /root/.u2net
 }
@@ -135,6 +146,20 @@ run_model_download() {
 
   log "Downloading model list into ${COMFY_MODELS_DIR:-/app/comfy/models}"
   python /app/runpod/download_models.py || log "Model downloader finished with warnings"
+}
+
+start_comfy3d() {
+  if [ "${COMFY3D_START_ON_BOOT:-1}" != "1" ]; then
+    log "COMFY3D_START_ON_BOOT=0; not starting in-container ComfyUI"
+    return
+  fi
+
+  log "Starting in-container ComfyUI/Comfy3D on :${COMFY_PORT:-8188}"
+  (
+    cd /app/comfy
+    exec comfy launch -- --listen 0.0.0.0 --port "${COMFY_PORT:-8188}"
+  ) &
+  PIDS+=("$!")
 }
 
 start_vlm() {
@@ -262,6 +287,7 @@ start_vlm
 setup_ollama
 setup_hermes_agent
 make_writable "${WORKSPACE_ROOT:-/runpod-volume}"/remesher "${WORKSPACE_ROOT:-/runpod-volume}"/input "${WORKSPACE_ROOT:-/runpod-volume}"/output "${WORKSPACE_ROOT:-/runpod-volume}"/notebooks
+start_comfy3d
 start_hermes
 start_jupyter
 

@@ -75,12 +75,12 @@ jobs:
             --runtime=nvidia \
             --gpus all \
             -p 8235:8888 \
+            -p 8236:8188 \
             -e DOWNLOAD_MODELS_ON_START=0 \
             -e CLONE_REMESHER_ON_START=0 \
             -e VLM_ENABLE=0 \
             -e HERMES_ENABLE=0 \
             -e OLLAMA_PREP_ON_START=0 \
-            -v /var/run/docker.sock:/var/run/docker.sock \
             "${IMAGE_NAME}:${{ steps.meta.outputs.image_tag }}"
 
           for attempt in $(seq 1 90); do
@@ -89,12 +89,14 @@ jobs:
                docker exec "${TEST_CONTAINER}" test -f /workspace/remesher/notebooks/04_ollama_gemma_pidev.ipynb && \
                docker exec "${TEST_CONTAINER}" test -f /workspace/remesher/docker/demo-jupyter/scripts/pull-comfy3d.sh && \
                docker exec "${TEST_CONTAINER}" test -f /workspace/remesher/docker/demo-jupyter/scripts/ollama-gemma4.sh && \
+               docker exec "${TEST_CONTAINER}" test -s /workspace/input/demo/pencil_sketch_character.jpg && \
+               docker exec "${TEST_CONTAINER}" test -s /workspace/input/animation_templates/mixamo/Mma_Kick.fbx && \
                docker exec "${TEST_CONTAINER}" test -f /workspace/remesher/skills/remesher-cli/SKILL.md && \
                docker exec "${TEST_CONTAINER}" comfy-prompt-cli --help >/dev/null && \
-               docker exec "${TEST_CONTAINER}" python -c "import docker, requests, ipykernel" && \
-               docker exec "${TEST_CONTAINER}" docker --version >/dev/null && \
-               docker exec "${TEST_CONTAINER}" docker version --format '{{.Client.Version}}' >/dev/null; then
-              echo "✅ Remesher Jupyter container started with notebooks and Docker-control dependencies"
+               docker exec "${TEST_CONTAINER}" python -c "import requests, ipykernel" && \
+               docker exec "${TEST_CONTAINER}" curl -fsS http://127.0.0.1:8188/system_stats >/dev/null && \
+               docker exec "${TEST_CONTAINER}" bash -lc "cd /workspace/remesher && RUNPOD_COMBINED_COMFY3D=1 bash docker/demo-jupyter/scripts/pull-comfy3d.sh && grep -q '127.0.0.1:8188' config.json"; then
+              echo "✅ Remesher combined Jupyter+Comfy3D container started and notebook setup succeeded"
               exit 0
             fi
             if ! docker inspect -f '{{.State.Running}}' "${TEST_CONTAINER}" 2>/dev/null | grep -q true; then

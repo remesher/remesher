@@ -1206,11 +1206,11 @@ def _run_bpy_worker(
     summary_json: Path,
     bpy_container: str,
 ) -> None:
-    """Run a bpy worker locally when possible; otherwise use the Comfy3D sibling container.
+    """Run a bpy worker locally when possible; otherwise use a Comfy3D container.
 
-    The Remesher Docker image is intentionally a Jupyter/control image and does not bundle
-    Blender/bpy. The sibling Comfy3D runtime does, so notebooks can still invoke these
-    existing script-backed workers through the same comfy-prompt-cli command.
+    The current RunPod image inherits from Comfy3D, so Blender/bpy should normally
+    be available in the local Python environment. Older/local control-image setups
+    can still fall back to a named Comfy3D sibling container.
     """
     if _python_has_bpy():
         cmd = [
