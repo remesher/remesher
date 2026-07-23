@@ -22,18 +22,21 @@ prepare_workspace() {
   local work="${WORKSPACE_ROOT:-/runpod-volume}"
   [ -d "${RUNPOD_VOLUME:-/runpod-volume}" ] && work="${RUNPOD_VOLUME:-/runpod-volume}"
 
-  mkdir -p "$work"/{models,custom_nodes,manager,u2net,output,workflows,input,repos}
-  mkdir -p /app/comfy/user/default /root
-
-  link_dir /app/comfy/models "$work/models"
-  link_dir /app/comfy/custom_nodes "$work/custom_nodes"
-  link_dir /app/comfy/output "$work/output"
-  link_dir /app/comfy/input "$work/input"
-  link_dir /app/comfy/user/default/workflows "$work/workflows"
-  link_dir /app/comfy/user/default/ComfyUI-Manager "$work/manager"
+  mkdir -p "$work"/{models,custom_nodes,manager,u2net,output,workflows,input,repos,notebooks,remesher}
+  mkdir -p /root
 
   rm -rf /root/.u2net || true
   ln -sfnT "$work/u2net" /root/.u2net
+}
+
+stage_demo_notebooks() {
+  local work="${WORKSPACE_ROOT:-/workspace}"
+  [ -d "${RUNPOD_VOLUME:-/workspace}" ] && work="${RUNPOD_VOLUME:-/workspace}"
+
+  if [ -d /app/remesher ]; then
+    mkdir -p "$work/remesher"
+    cp -rn /app/remesher/. "$work/remesher/" 2>/dev/null || true
+  fi
 }
 
 activate_venv() {
@@ -81,7 +84,7 @@ setup_remesher_cli() {
   local repo_url="${REMESHER_REPO_URL:-https://github.com/remesher/remesher.git}"
   local repo_dir="${REMESHER_DIR:-/runpod-volume/remesher}"
 
-  if [ ! -d "$repo_dir/.git" ]; then
+  if [ ! -d "$repo_dir/.git" ] && [ ! -f "$repo_dir/pyproject.toml" ]; then
     log "Cloning remesher CLI into $repo_dir"
     mkdir -p "$(dirname "$repo_dir")"
     git clone "$repo_url" "$repo_dir"
@@ -189,9 +192,31 @@ start_hermes() {
   log "Hermes enabled but no command found. Set HERMES_START_COMMAND to your exact startup command."
 }
 
-start_comfy() {
-  log "Starting ComfyUI on :${COMFY_PORT:-8188}"
-  comfy launch -- --listen 0.0.0.0 --port "${COMFY_PORT:-8188}" &
+setup_ollama() {
+  if [ "${OLLAMA_PREP_ON_START:-0}" != "1" ]; then
+    return
+  fi
+
+  local script="${REMESHER_DIR:-/workspace/remesher}/docker/demo-jupyter/scripts/ollama-gemma4.sh"
+  if [ -x "$script" ] || [ -f "$script" ]; then
+    log "Preparing Ollama model ${OLLAMA_MODEL:-gemma4}"
+    bash "$script" || log "Ollama prep failed; continuing so Jupyter remains available"
+  else
+    log "Ollama prep requested, but $script was not found"
+  fi
+}
+
+start_jupyter() {
+  local work="${WORKSPACE_ROOT:-/runpod-volume}"
+  log "Starting JupyterLab from ${work} on :${JUPYTER_PORT:-8888}"
+  jupyter lab \
+    --ip=0.0.0.0 \
+    --port "${JUPYTER_PORT:-8888}" \
+    --no-browser \
+    --allow-root \
+    --NotebookApp.token="${JUPYTER_TOKEN:-}" \
+    --ServerApp.token="${JUPYTER_TOKEN:-}" \
+    --notebook-dir "${work}" &
   PIDS+=("$!")
 }
 
@@ -206,13 +231,15 @@ trap cleanup EXIT SIGTERM SIGINT
 
 PIDS=()
 prepare_workspace
+stage_demo_notebooks
 activate_venv
 setup_remesher_cli
 run_model_download
 start_vlm
+setup_ollama
 setup_hermes_agent
 start_hermes
-start_comfy
+start_jupyter
 
 if [ "${#PIDS[@]}" -eq 0 ]; then
   log "No services started; sleeping forever"

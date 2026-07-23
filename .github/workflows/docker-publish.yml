@@ -14,7 +14,7 @@ permissions:
 env:
   IMAGE_NAME: ${{ vars.DOCKERHUB_USERNAME || 'michaelgold' }}/remesher
   DOCKERFILE: docker-example/runpod/Dockerfile
-  CONTEXT: docker-example/runpod
+  CONTEXT: .
   TEST_CONTAINER: remesher-ci-smoke
 
 jobs:
@@ -41,7 +41,6 @@ jobs:
         run: |
           docker pull "${IMAGE_NAME}:latest" || true
           docker pull "${IMAGE_NAME}:${{ steps.meta.outputs.image_tag }}" || true
-          docker pull michaelgold/comfy3d:latest || true
 
       - name: Build Docker image
         env:
@@ -50,7 +49,6 @@ jobs:
           docker build \
             --cache-from "${IMAGE_NAME}:latest" \
             --cache-from "${IMAGE_NAME}:${{ steps.meta.outputs.image_tag }}" \
-            --cache-from michaelgold/comfy3d:latest \
             --build-arg BUILDKIT_INLINE_CACHE=1 \
             -t "${IMAGE_NAME}:${{ steps.meta.outputs.image_tag }}" \
             -f "${DOCKERFILE}" "${CONTEXT}"
@@ -76,17 +74,26 @@ jobs:
             --name "${TEST_CONTAINER}" \
             --runtime=nvidia \
             --gpus all \
-            -p 8235:8188 \
+            -p 8235:8888 \
             -e DOWNLOAD_MODELS_ON_START=0 \
             -e CLONE_REMESHER_ON_START=0 \
             -e VLM_ENABLE=0 \
             -e HERMES_ENABLE=0 \
+            -e OLLAMA_PREP_ON_START=0 \
+            -v /var/run/docker.sock:/var/run/docker.sock \
             "${IMAGE_NAME}:${{ steps.meta.outputs.image_tag }}"
 
           for attempt in $(seq 1 90); do
-            if docker logs "${TEST_CONTAINER}" 2>&1 | tee logs.txt | grep -q "Starting ComfyUI" && \
-               docker logs "${TEST_CONTAINER}" 2>&1 | grep -q "0.0.0.0"; then
-              echo "✅ Remesher container started ComfyUI"
+            if docker logs "${TEST_CONTAINER}" 2>&1 | tee logs.txt | grep -q "Starting JupyterLab" && \
+               docker exec "${TEST_CONTAINER}" test -f /workspace/remesher/notebooks/01_comfy3d_remesher_cli.ipynb && \
+               docker exec "${TEST_CONTAINER}" test -f /workspace/remesher/notebooks/04_ollama_gemma_pidev.ipynb && \
+               docker exec "${TEST_CONTAINER}" test -f /workspace/remesher/docker/demo-jupyter/scripts/pull-comfy3d.sh && \
+               docker exec "${TEST_CONTAINER}" test -f /workspace/remesher/docker/demo-jupyter/scripts/ollama-gemma4.sh && \
+               docker exec "${TEST_CONTAINER}" test -f /workspace/remesher/skills/remesher-cli/SKILL.md && \
+               docker exec "${TEST_CONTAINER}" comfy-prompt-cli --help >/dev/null && \
+               docker exec "${TEST_CONTAINER}" python -c "import docker, requests, ipykernel" && \
+               docker exec "${TEST_CONTAINER}" docker version --format '{{.Client.Version}}' >/dev/null; then
+              echo "✅ Remesher Jupyter container started with notebooks and Docker-control dependencies"
               exit 0
             fi
             if ! docker inspect -f '{{.State.Running}}' "${TEST_CONTAINER}" 2>/dev/null | grep -q true; then
@@ -98,7 +105,7 @@ jobs:
 
           docker logs "${TEST_CONTAINER}" > logs.txt 2>&1 || true
           cat logs.txt
-          echo "❌ Timed out waiting for ComfyUI startup"
+          echo "❌ Timed out waiting for Jupyter startup"
           exit 1
 
   push:
