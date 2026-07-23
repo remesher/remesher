@@ -42,6 +42,8 @@ The template starts the Remesher notebook/control environment. It is designed to
 
 - The lab image is a notebook/control image, not the Comfy3D runtime itself. The notebooks start Comfy3D separately.
 - The ComfyUI API endpoint used by the notebooks is `http://host.docker.internal:8188/`.
+- Starting Comfy3D from the notebooks requires Docker daemon access, usually a mounted `/var/run/docker.sock`. The image
+  includes the Docker CLI, but the pod/template must provide the daemon socket.
 - Generated files are written under `/workspace/output` by default.
 - Uploaded inputs should go under `/workspace/input` or use the upload widget in Lab 3.
 - Protected Hugging Face downloads require `HF_TOKEN` in the notebook/session environment.
@@ -386,6 +388,10 @@ A successful lab run should produce:
 
 - **Connection errors:** verify `config.json`, ComfyUI host/port, and that the server is reachable from the machine running the CLI.
 - **RunPod notebook cannot reach ComfyUI:** confirm the Comfy3D container started from the notebook and that the notebook config uses `http://host.docker.internal:8188/`.
+- **`failed to connect to the docker API at unix:///var/run/docker.sock`:** the notebook image has the Docker CLI, but
+  this pod was launched without Docker daemon/socket access. Relaunch with a template that mounts
+  `/var/run/docker.sock:/var/run/docker.sock`, or start Comfy3D separately and set
+  `COMFY3D_SERVER_URL=https://<your-comfy3d-endpoint>/` before running `docker/demo-jupyter/scripts/pull-comfy3d.sh`.
 - **Workflow JSON errors:** use ComfyUI API prompt JSON, not the UI workflow export format with `nodes` and `links`.
 - **Missing node/model errors:** install the ComfyUI custom nodes and model weights required by the selected workflow.
 - **Hugging Face gated model errors:** paste a valid read token starting with `hf_` and request access to gated model repositories before rerunning the downloader.
