@@ -92,6 +92,7 @@ jobs:
                docker exec "${TEST_CONTAINER}" test -f /workspace/remesher/skills/remesher-cli/SKILL.md && \
                docker exec "${TEST_CONTAINER}" comfy-prompt-cli --help >/dev/null && \
                docker exec "${TEST_CONTAINER}" python -c "import docker, requests, ipykernel" && \
+               docker exec "${TEST_CONTAINER}" docker --version >/dev/null && \
                docker exec "${TEST_CONTAINER}" docker version --format '{{.Client.Version}}' >/dev/null; then
               echo "✅ Remesher Jupyter container started with notebooks and Docker-control dependencies"
               exit 0
