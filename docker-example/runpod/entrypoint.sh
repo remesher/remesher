@@ -47,6 +47,10 @@ stage_demo_notebooks() {
   if [ -d /app/remesher ]; then
     mkdir -p "$work/remesher"
     cp -rn /app/remesher/. "$work/remesher/" 2>/dev/null || true
+    if [ -d /app/remesher/workspace/input ]; then
+      mkdir -p "$work/input"
+      cp -rn /app/remesher/workspace/input/. "$work/input/" 2>/dev/null || true
+    fi
     make_writable "$work/remesher" "$work/notebooks" "$work/input" "$work/output"
   fi
 }
