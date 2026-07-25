@@ -77,7 +77,7 @@ uv run comfy-prompt-cli image-text-to-image \
 uv run comfy-prompt-cli image-to-glb \
   --image path/to/input.png \
   --mesh-seed 12345 \
-  --target-face-num 800000 \
+  --target-face-num 80000 \
   --filename-prefix my_mesh \
   --texture-seed 67890
 ```
@@ -116,7 +116,7 @@ uv run comfy-prompt-cli send path/to/prompt_api.json
 uv run comfy-prompt-cli send path/to/prompt_api.json \
   --prompt "A 3d cartoon astronaut in a t-pose" \
   --mesh-seed 12345 \
-  --target-face-num 800000 \
+  --target-face-num 80000 \
   --filename-prefix astronaut \
   --texture-seed 67890
 ```
@@ -139,7 +139,7 @@ uv run comfy-prompt-cli wait <prompt_id> --client-id <client_id> --out-dir downl
 uv run comfy-prompt-cli run path/to/prompt_api.json \
   --prompt "A 3d cartoon astronaut in a t-pose" \
   --mesh-seed 12345 \
-  --target-face-num 800000 \
+  --target-face-num 80000 \
   --filename-prefix astronaut \
   --texture-seed 67890 \
   --out-dir downloads
@@ -168,7 +168,7 @@ uv run comfy-prompt-cli image-text-to-image \
 uv run comfy-prompt-cli image-to-glb \
   --image path/to/input.png \
   --mesh-seed 12345 \
-  --target-face-num 800000 \
+  --target-face-num 80000 \
   --filename-prefix astronaut \
   --texture-seed 67890
 ```

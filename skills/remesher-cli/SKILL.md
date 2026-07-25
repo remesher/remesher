@@ -14,7 +14,7 @@ Use this skill when an agent needs to operate the Remesher Typer CLI in this rep
 - Shared uploads: `/workspace/input`
 - Shared downloads: `/workspace/output`
 - Config file: `/workspace/remesher/config.json`
-- Default RunPod ComfyUI URL inside the combined image: `http://127.0.0.1:8188/`
+- Default ComfyUI URL from Jupyter container to sibling Docker container: `http://host.docker.internal:8188/`
 
 ## First checks
 

@@ -21,23 +21,10 @@ def _repo_root() -> Path:
 def _ensure_repo_on_path() -> None:
     repo_root = _repo_root()
     comfy_root = repo_root.parents[1]
-    for path in (comfy_root, repo_root, repo_root / "nodes"):
+    third_party = repo_root / "third_party"
+    for path in (third_party, comfy_root, repo_root):
         if str(path) not in sys.path:
             sys.path.insert(0, str(path))
-
-
-def _ensure_auto_rig_pro_on_path() -> Path | None:
-    """Add the bundled Auto-Rig Pro addon parent to sys.path when available."""
-    candidates = [
-        Path("/app/comfy/custom_nodes/ComfyUI-UniRig/third_party"),
-        Path("/workspace/ComfyUI/custom_nodes/ComfyUI-UniRig/third_party"),
-    ]
-    for candidate in candidates:
-        if (candidate / "auto_rig_pro").exists():
-            if str(candidate) not in sys.path:
-                sys.path.insert(0, str(candidate))
-            return candidate / "auto_rig_pro"
-    return None
 
 
 def _action_summary(action) -> dict | None:
@@ -152,7 +139,6 @@ def retarget_mixamo_to_glb(
 
     # Register ARP through Blender's addon API. Direct auto_rig_pro.register()
     # misses addon preferences in headless bpy and fails before scene properties.
-    result["auto_rig_pro_path"] = str(_ensure_auto_rig_pro_on_path() or "")
     bpy.ops.preferences.addon_enable(module="auto_rig_pro")
     scn = bpy.context.scene
     result["addon_enabled"] = True

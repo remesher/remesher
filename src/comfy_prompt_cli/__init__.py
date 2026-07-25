@@ -21,6 +21,8 @@ DEFAULT_TEXT_TO_IMAGE_WORKFLOW = Path("examples/qwen_image_2512.json")
 DEFAULT_IMAGE_TEXT_TO_IMAGE_WORKFLOW = Path("examples/qwen_image_edit_2511.json")
 DEFAULT_IMAGE_TO_GLB_WORKFLOW = Path("examples/img_to_trellis2.json")
 DEFAULT_RIG_GLB_WORKFLOW = Path("examples/rig_glb_mia.json")
+DEFAULT_RETARGET_WORKER = Path("docker/demo-jupyter/scripts/arp_retarget_worker.py")
+DEFAULT_SKIN_CLEANUP_WORKER = Path("docker/demo-jupyter/scripts/anatomical_cleanup_worker.py")
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 GLB_EXTENSIONS = {".glb"}
 
@@ -930,7 +932,7 @@ def image_to_glb(
     config: Path = typer.Option(CONFIG_PATH, help="Path to config.json"),
     client_id: str | None = typer.Option(None, help="Optional ComfyUI client_id"),
     mesh_seed: int | None = typer.Option(None, help="Override Trellis mesh seed"),
-    target_face_num: int | None = typer.Option(None, help="Override target face count"),
+    target_face_num: int | None = typer.Option(80000, help="Override target face count; default keeps notebook GLBs small"),
     filename_prefix: str | None = typer.Option(
         None, help="Override output filename prefix"
     ),
@@ -1392,7 +1394,7 @@ def text_to_glb(
         help="Override SaveImage filename prefix for text stage",
     ),
     mesh_seed: int | None = typer.Option(None, help="Override Trellis mesh seed"),
-    target_face_num: int | None = typer.Option(None, help="Override target face count"),
+    target_face_num: int | None = typer.Option(80000, help="Override target face count; default keeps notebook GLBs small"),
     filename_prefix: str | None = typer.Option(
         None, help="Override Trellis export filename prefix"
     ),
@@ -1529,7 +1531,7 @@ def text_to_rigged_glb(
         help="Override SaveImage filename prefix for text stage",
     ),
     mesh_seed: int | None = typer.Option(None, help="Override Trellis mesh seed"),
-    target_face_num: int | None = typer.Option(None, help="Override target face count"),
+    target_face_num: int | None = typer.Option(80000, help="Override target face count; default keeps generated GLBs small"),
     filename_prefix: str | None = typer.Option(
         None, help="Override Trellis export filename prefix"
     ),
@@ -1837,6 +1839,210 @@ def config_init(
     cfg = AppConfig.model_validate({"server_url": server_url})
     out.write_text(cfg.model_dump_json(indent=2), encoding="utf-8")
     typer.echo(f"Wrote {out}")
+
+
+@app.command("skin-cleanup-glb")
+def skin_cleanup_glb(
+    input_glb: Path = typer.Option(..., "--input-glb", "--mesh", help="Rigged or animated GLB to clean."),
+    output_name: str | None = typer.Option(None, "--output-name", help="Output GLB base name."),
+    worker_file: Path = typer.Option(DEFAULT_SKIN_CLEANUP_WORKER, help="Anatomical cleanup worker script to stage into the Comfy3D container."),
+    container: str = typer.Option("remesher-comfy3d", help="Docker container with bpy + UniRig installed."),
+    input_dir: Path = typer.Option(Path("workspace/input"), help="Host/Jupyter input directory mounted to /app/comfy/input."),
+    out_dir: Path = typer.Option(Path("workspace/output/rigged"), help="Host/Jupyter output directory for cleaned GLBs."),
+    mode: str = typer.Option("conservative", help="Cleanup mode: diagnostic, conservative, motion-diagnostic, component-repair."),
+    repair_zones: str = typer.Option("head_top,head_neck", help="Comma-separated zones to repair. Head zones are the notebook default."),
+    max_fraction_per_zone: float = typer.Option(0.03, help="Safety cap for conservative rewrites per zone."),
+    validate: bool = typer.Option(True, help="Re-import exported GLB and validate structure."),
+) -> None:
+    """Run conservative anatomical skin-weight cleanup on a GLB in the Comfy3D container."""
+    import shutil
+    import subprocess
+
+    if not input_glb.exists():
+        raise typer.BadParameter(f"Input GLB not found: {input_glb}")
+    if not worker_file.exists() and not worker_file.is_absolute():
+        repo_candidate = Path(__file__).resolve().parents[2] / worker_file
+        if repo_candidate.exists():
+            worker_file = repo_candidate
+    if not worker_file.exists():
+        raise typer.BadParameter(f"Skin cleanup worker not found: {worker_file}")
+
+    input_dir.mkdir(parents=True, exist_ok=True)
+    staged_dir = input_dir / "skin_cleanup"
+    scripts_dir = input_dir / "scripts"
+    staged_dir.mkdir(parents=True, exist_ok=True)
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    staged_glb = staged_dir / input_glb.name
+    staged_worker = scripts_dir / "anatomical_cleanup_worker.py"
+    helper_file = worker_file.parent / "anatomical_skinning.py"
+    staged_helper = scripts_dir / "anatomical_skinning.py"
+    shutil.copy2(input_glb, staged_glb)
+    shutil.copy2(worker_file, staged_worker)
+    if helper_file.exists():
+        shutil.copy2(helper_file, staged_helper)
+
+    output_base = output_name or f"{input_glb.stem}_headfix"
+    if output_base.lower().endswith(".glb"):
+        output_base = output_base[:-4]
+    output_host = out_dir / f"{output_base}.glb"
+    summary_host = out_dir / f"{output_base}.skin_cleanup.json"
+
+    staged_worker_container = f"/app/comfy/input/scripts/{staged_worker.name}"
+    worker_container = "/app/comfy/custom_nodes/ComfyUI-UniRig/nodes/anatomical_cleanup_worker.py"
+    input_container = f"/app/comfy/input/skin_cleanup/{staged_glb.name}"
+    output_container = f"/app/comfy/output/../input/skin_cleanup_unused"
+    # remesher-comfy3d maps host workspace/output/comfyui to /app/comfy/output.
+    # If the requested out_dir is /workspace/output/rigged, it is not directly mounted.
+    # Write via /app/comfy/output/skin_cleanup, then copy back through the Jupyter-visible host path.
+    output_container = f"/app/comfy/output/skin_cleanup/{output_host.name}"
+    summary_container = f"/app/comfy/output/skin_cleanup/{summary_host.name}"
+
+    staged_helper_container = f"/app/comfy/input/scripts/{staged_helper.name}"
+    helper_container = "/app/comfy/custom_nodes/ComfyUI-UniRig/nodes/anatomical_skinning.py"
+    stage_command = ["docker", "exec", container, "bash", "-lc", f"mkdir -p /app/comfy/output/skin_cleanup && cp {staged_worker_container} {worker_container} && if [ -f {staged_helper_container} ]; then cp {staged_helper_container} {helper_container}; fi"]
+    stage = subprocess.run(stage_command, capture_output=True, text=True, timeout=60)
+    if stage.returncode != 0:
+        if stage.stderr:
+            typer.echo(stage.stderr.rstrip(), err=True)
+        raise typer.Exit(stage.returncode)
+
+    command = [
+        "docker", "exec", container,
+        "python3", worker_container,
+        input_container,
+        output_container,
+        "--mode", mode,
+        "--repair-zones", repair_zones,
+        "--max-fraction-per-zone", str(max_fraction_per_zone),
+        "--summary-json", summary_container,
+    ]
+    if not validate:
+        command.append("--no-validate")
+    typer.echo("Running anatomical skin cleanup worker:")
+    typer.echo(" ".join(command))
+    process = subprocess.run(command, capture_output=True, text=True, timeout=1200)
+    if process.stdout:
+        typer.echo(process.stdout.rstrip())
+    if process.returncode != 0:
+        if process.stderr:
+            typer.echo(process.stderr.rstrip(), err=True)
+        raise typer.Exit(process.returncode)
+
+    # Copy worker output from the Comfy output mount back to requested out_dir if needed.
+    comfy_host_output = Path("workspace/output/comfyui/skin_cleanup")
+    produced_glb = comfy_host_output / output_host.name
+    produced_summary = comfy_host_output / summary_host.name
+    if produced_glb.exists():
+        shutil.copy2(produced_glb, output_host)
+    if produced_summary.exists():
+        shutil.copy2(produced_summary, summary_host)
+    if not output_host.exists():
+        raise typer.BadParameter(f"Skin cleanup completed but output was not found: {output_host}")
+    typer.echo(f"Cleaned GLB: {output_host}")
+    typer.echo(f"Cleanup summary: {summary_host}")
+
+
+@app.command("retarget-glb")
+def retarget_glb(
+    rigged_glb: Path = typer.Option(..., "--rigged-glb", "--mesh", help="Rigged GLB to animate."),
+    animation_fbx: Path = typer.Option(..., "--animation", help="Mixamo FBX animation to retarget."),
+    glb_name: str | None = typer.Option(None, "--glb-name", help="Output GLB base name."),
+    worker_file: Path = typer.Option(DEFAULT_RETARGET_WORKER, help="ARP retarget worker script to stage into the Comfy3D container."),
+    container: str = typer.Option("remesher-comfy3d", help="Docker container with bpy + Auto-Rig Pro/UniRig installed."),
+    input_dir: Path = typer.Option(Path("workspace/input"), help="Host/Jupyter input directory mounted to /app/comfy/input."),
+    out_dir: Path = typer.Option(Path("workspace/output/comfyui/animated"), help="Host/Jupyter directory where animated GLBs should be visible."),
+    frame_start: int | None = typer.Option(None, help="Optional animation start frame."),
+    frame_end: int | None = typer.Option(None, help="Optional animation end frame; <=0 uses source end."),
+    validate: bool = typer.Option(True, help="Re-import exported GLB and validate animation deltas."),
+) -> None:
+    """Retarget a Mixamo FBX animation onto a rigged GLB using Auto-Rig Pro in Comfy3D."""
+    import shutil
+    import subprocess
+
+    if not rigged_glb.exists():
+        raise typer.BadParameter(f"Rigged GLB not found: {rigged_glb}")
+    if not animation_fbx.exists():
+        raise typer.BadParameter(f"Animation FBX not found: {animation_fbx}")
+    if not worker_file.exists() and not worker_file.is_absolute():
+        repo_candidate = Path(__file__).resolve().parents[2] / worker_file
+        if repo_candidate.exists():
+            worker_file = repo_candidate
+    if not worker_file.exists():
+        raise typer.BadParameter(f"Retarget worker not found: {worker_file}")
+
+    input_dir.mkdir(parents=True, exist_ok=True)
+    staged_dir = input_dir / "retarget"
+    scripts_dir = input_dir / "scripts"
+    staged_dir.mkdir(parents=True, exist_ok=True)
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    staged_glb = staged_dir / rigged_glb.name
+    staged_anim = staged_dir / animation_fbx.name
+    staged_worker = scripts_dir / "arp_retarget_worker.py"
+    shutil.copy2(rigged_glb, staged_glb)
+    shutil.copy2(animation_fbx, staged_anim)
+    shutil.copy2(worker_file, staged_worker)
+
+    output_base = glb_name or f"{rigged_glb.stem}_{animation_fbx.stem}_animated"
+    if output_base.lower().endswith(".glb"):
+        output_base = output_base[:-4]
+    output_host = out_dir / f"{output_base}.glb"
+    summary_host = out_dir / f"{output_base}.retarget.json"
+
+    # These host/Jupyter paths are bind-mounted into remesher-comfy3d as /app/comfy/input and /app/comfy/output.
+    staged_worker_container = f"/app/comfy/input/scripts/{staged_worker.name}"
+    # The worker expects to live in ComfyUI-UniRig/nodes so its _repo_root() can
+    # resolve bundled third_party/auto_rig_pro for bpy.ops.preferences.addon_enable.
+    worker_container = "/app/comfy/custom_nodes/ComfyUI-UniRig/nodes/arp_retarget_worker.py"
+    glb_container = f"/app/comfy/input/retarget/{staged_glb.name}"
+    anim_container = f"/app/comfy/input/retarget/{staged_anim.name}"
+    output_container = f"/app/comfy/output/animated/{output_host.name}"
+    summary_container = f"/app/comfy/output/animated/{summary_host.name}"
+
+    stage_command = [
+        "docker", "exec", container,
+        "bash", "-lc",
+        f"cp {staged_worker_container} {worker_container}",
+    ]
+    stage = subprocess.run(stage_command, capture_output=True, text=True, timeout=60)
+    if stage.returncode != 0:
+        if stage.stderr:
+            typer.echo(stage.stderr.rstrip(), err=True)
+        raise typer.Exit(stage.returncode)
+
+    command = [
+        "docker", "exec", container,
+        "python3", worker_container,
+        glb_container,
+        anim_container,
+        output_container,
+        "--summary-json", summary_container,
+    ]
+    if frame_start is not None:
+        command.extend(["--frame-start", str(frame_start)])
+    if frame_end is not None:
+        command.extend(["--frame-end", str(frame_end)])
+    if not validate:
+        command.append("--no-validate")
+
+    typer.echo("Running ARP retarget worker:")
+    typer.echo(" ".join(command))
+    process = subprocess.run(command, capture_output=True, text=True, timeout=1200)
+    if process.stdout:
+        typer.echo(process.stdout.rstrip())
+    if process.returncode != 0:
+        if process.stderr:
+            typer.echo(process.stderr.rstrip(), err=True)
+        raise typer.Exit(process.returncode)
+    if not output_host.exists():
+        raise typer.BadParameter(f"Retarget worker completed but output was not found: {output_host}")
+    if not summary_host.exists():
+        summary_host.write_text(json.dumps({"output_glb": str(output_host), "worker_stdout": process.stdout}, indent=2))
+    typer.echo(f"Animated GLB: {output_host}")
+    typer.echo(f"Retarget summary: {summary_host}")
 
 
 def main() -> None:

@@ -1,0 +1,34 @@
+services:
+  remesher-jupyter:
+    build:
+      context: .
+      dockerfile: docker/demo-jupyter/Dockerfile
+    image: remesher-jupyter:local
+    container_name: remesher-jupyter
+    ports:
+      - "8888:8888"
+      - "11434:11434"
+    environment:
+      JUPYTER_TOKEN: ${JUPYTER_TOKEN:-remesher}
+      HF_TOKEN: ${HF_TOKEN:-}
+      COMFY3D_IMAGE: ${COMFY3D_IMAGE:-michaelgold/comfy3d:latest}
+      COMFY3D_CONTAINER: ${COMFY3D_CONTAINER:-remesher-comfy3d}
+      COMFY3D_PORT: ${COMFY3D_PORT:-8188}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4}
+      PIDEV_INSTALL: ${PIDEV_INSTALL:-}
+    volumes:
+      - .:/workspace/remesher
+      - ./workspace/input:/workspace/input
+      - ./workspace/output:/workspace/output
+      - ./workspace/models:/workspace/models
+      - ./notebooks:/workspace/notebooks
+      - /var/run/docker.sock:/var/run/docker.sock
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

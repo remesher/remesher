@@ -15,7 +15,7 @@ The fastest way to run the lab is to launch the prepared RunPod template:
 
 [Launch the Remesher RunPod template](https://console.runpod.io/deploy?template=oly10k0o6g&ref=74ihrngg)
 
-The template starts a combined Remesher + Comfy3D environment. It provides JupyterLab, the Remesher CLI, and an in-container ComfyUI/Comfy3D server on port `8188`, so the notebooks do not need a Docker socket on RunPod.
+The template starts the Remesher notebook/control environment. It is designed to provide JupyterLab and the Remesher CLI, then let the notebooks pull and run the separate `michaelgold/comfy3d` runtime container.
 
 ### RunPod launch steps
 
@@ -27,7 +27,7 @@ The template starts a combined Remesher + Comfy3D environment. It provides Jupyt
 6. In JupyterLab, browse to `/workspace/remesher/notebooks`.
 7. Start with `01_comfy3d_remesher_cli.ipynb` unless you specifically want one of the later labs.
 8. If the notebook asks for a Hugging Face token, paste a **read** token. DINOv3 and other gated assets require that token and may also require requesting model access on Hugging Face.
-9. Run the notebook cells from top to bottom. The setup cells configure `config.json`, wait for the in-container Comfy3D server, download or verify the required models, and run `comfy-prompt-cli health` before the heavier generation steps.
+9. Run the notebook cells from top to bottom. The setup cells configure `config.json`, pull/start Comfy3D, download or verify the required models, and run `comfy-prompt-cli health` before the heavier generation steps.
 
 ### What the RunPod image provides
 
@@ -35,18 +35,17 @@ The template starts a combined Remesher + Comfy3D environment. It provides Jupyt
 - Remesher notebooks staged under `/workspace/remesher/notebooks`.
 - Helper scripts under `/workspace/remesher/docker/demo-jupyter/scripts`.
 - The Remesher CLI installed in the image environment.
-- In-container ComfyUI/Comfy3D service on port `8188`.
+- Docker CLI/Python Docker SDK support so notebooks can pull and run `michaelgold/comfy3d`.
 - Optional Ollama/Gemma setup scripts for Lab 4.
 
 ### Important RunPod notes
 
-- The lab image inherits from `michaelgold/comfy3d`; ComfyUI/Comfy3D starts inside the same container.
-- The ComfyUI API endpoint used by the RunPod notebooks is `http://127.0.0.1:8188/`.
-- Docker daemon/socket access is no longer required for the default RunPod flow.
+- The lab image is a notebook/control image, not the Comfy3D runtime itself. The notebooks start Comfy3D separately.
+- The ComfyUI API endpoint used by the notebooks is `http://host.docker.internal:8188/`.
 - Generated files are written under `/workspace/output` by default.
 - Uploaded inputs should go under `/workspace/input` or use the upload widget in Lab 3.
 - Protected Hugging Face downloads require `HF_TOKEN` in the notebook/session environment.
-- Large first runs can take a while because model downloads are cached only after they complete once.
+- Large first runs can take a while because model downloads and container pulls are cached only after they complete once.
 
 ## Repository
 
@@ -70,7 +69,7 @@ If you launch from the RunPod template, most software prerequisites are already 
 For local development, install:
 
 - Python with [`uv`](https://docs.astral.sh/uv/)
-- Docker with GPU access if you want to run the combined image locally, or a reachable ComfyUI server
+- Docker with GPU access if you want the notebooks to start the Comfy3D container locally
 - A reachable ComfyUI server
 - Required ComfyUI nodes and models for the workflows you plan to run, for example:
   - Qwen image generation/edit nodes
@@ -87,7 +86,7 @@ uv run comfy-prompt-cli config init --force
 
 ```json
 {
-  "server_url": "http://127.0.0.1:8188/"
+  "server_url": "http://host.docker.internal:8188/"
 }
 ```
 
@@ -202,7 +201,7 @@ Lab 1 is the baseline end-to-end walkthrough. Run it first to confirm the pod, C
 
 - Start from a clean notebook session.
 - Configure the Remesher CLI to talk to ComfyUI.
-- Wait for the in-container ComfyUI/Comfy3D server.
+- Pull/start the `michaelgold/comfy3d` runtime container.
 - Download or verify the exact model groups used by Remesher examples.
 - Run a text-to-image prompt.
 - Convert an image into a GLB.
@@ -212,9 +211,9 @@ Lab 1 is the baseline end-to-end walkthrough. Run it first to confirm the pod, C
 
 1. Create `/workspace/input`, `/workspace/output`, and `/workspace/models`.
 2. Optionally enter a Hugging Face read token for gated model downloads.
-3. Write `config.json` with `http://127.0.0.1:8188/` as the ComfyUI server.
-4. Run `docker/demo-jupyter/scripts/pull-comfy3d.sh` to wait for Comfy3D and confirm the config.
-5. Run the Remesher model downloader. The default model group is `all`; targeted groups include `qwenimage2512`, `qwenimageedit2511`, `trellis2`, `dinov3`, and `mia`.
+3. Write `config.json` with `http://host.docker.internal:8188/` as the ComfyUI server.
+4. Run `docker/demo-jupyter/scripts/pull-comfy3d.sh` to pull/start Comfy3D.
+5. Run the Remesher model downloader inside the Comfy3D container. The default model group is `all`; targeted groups include `qwenimage2512`, `qwenimageedit2511`, `trellis2`, `dinov3`, and `mia`.
 6. Run `comfy-prompt-cli --help` and `comfy-prompt-cli health --config config.json`.
 7. Generate a front-facing full-body character image from the included prompt.
 8. Use that image, or an uploaded `/workspace/input/character.png`, as the input to `image-to-glb`.
@@ -315,17 +314,17 @@ Lab 3 replaces the canned sketch with upload widgets so you can test your own ch
 - For Mixamo retargeting, prefer a standard Mixamo FBX animation with an expected humanoid skeleton.
 - If retargeting fails, first verify that the rigged GLB exists and that the FBX upload path printed by the notebook is correct.
 
-## Lab 4 — Ollama/Gemma, pi.dev, and agent-assisted Remesher CLI use
+## Lab 4 — Ollama/Gemma, Pi, and agent-assisted Remesher CLI use
 
 Notebook: `notebooks/04_ollama_gemma_pidev.ipynb`
 
-Lab 4 explores a local-agent workflow. It starts Ollama, pulls Gemma, installs or checks pi.dev, and points the agent at the Remesher CLI skill file.
+Lab 4 explores a local-agent workflow. It starts Ollama, pulls Gemma, uses Ollama's Pi integration, and points the agent at the Remesher CLI skill file.
 
 ### Goals
 
 - Start a local Ollama server in the lab environment.
 - Pull or verify the configured Gemma model.
-- Prepare pi.dev to operate from `/workspace/remesher`.
+- Prepare Pi to operate from `/workspace/remesher` through `ollama launch pi --model gemma4`.
 - Give the agent a concrete Remesher CLI skill so it can run health checks, inspect inputs, and propose CLI actions.
 
 ### Main steps
@@ -334,15 +333,17 @@ Lab 4 explores a local-agent workflow. It starts Ollama, pulls Gemma, installs o
 2. Set `OLLAMA_MODEL`, defaulting to `gemma4`.
 3. Run `docker/demo-jupyter/scripts/ollama-gemma4.sh`.
 4. Confirm Ollama is responding at `http://127.0.0.1:11434/api/tags`.
-5. Run `docker/demo-jupyter/scripts/install-pidev.sh` to install or verify pi.dev.
-6. Export:
-   - `OLLAMA_HOST=http://127.0.0.1:11434`
-   - `OLLAMA_MODEL=${OLLAMA_MODEL:-gemma4}`
-   - `REMESHER_CLI_SKILL=/workspace/remesher/skills/remesher-cli/SKILL.md`
-   - `REMESHER_WORKDIR=/workspace/remesher`
-7. Ask pi.dev to use the skill, run `comfy-prompt-cli health --config /workspace/remesher/config.json`, list inputs in `/workspace/input`, ask before running heavy workflows, save outputs under `/workspace/output`, and verify non-empty files.
+5. Run `docker/demo-jupyter/scripts/install-pidev.sh` to install or verify Pi through Ollama's integration launcher. The RunPod image includes Node.js 22+ and npm because the integration uses npm and current Pi packages require modern Node.
+6. Open a JupyterLab terminal and launch Pi with one command:
 
-### Suggested pi.dev prompt
+   ```bash
+   bash /workspace/remesher/docker/demo-jupyter/scripts/run-pidev-remesher.sh
+   ```
+
+   The script starts from `/workspace/remesher`, exports `REMESHER_CLI_SKILL=/workspace/remesher/skills/remesher-cli/SKILL.md`, ensures Ollama/Gemma and Pi are ready, then launches Pi with that skill loaded.
+7. Ask Pi to run `comfy-prompt-cli health --config /workspace/remesher/config.json`, list inputs in `/workspace/input`, ask before running heavy workflows, save outputs under `/workspace/output`, and verify non-empty files.
+
+### Suggested Pi prompt
 
 ```text
 Operate the Remesher CLI using the skill at /workspace/remesher/skills/remesher-cli/SKILL.md.
@@ -354,21 +355,21 @@ Save outputs under /workspace/output and verify files are non-empty.
 ### Expected outputs
 
 - A running Ollama/Gemma local model endpoint.
-- A working pi.dev CLI command or a clear install failure to resolve.
+- A working Ollama-managed Pi launch path or a clear install failure to resolve.
 - Agent-driven CLI checks and proposed next actions based on the Remesher CLI skill.
 
 ### Tips
 
 - Lab 4 is for agent-assisted operation, not the primary asset pipeline. Run Lab 1 first if you have not verified Comfy3D and the model cache yet.
 - Keep agent instructions conservative: health check first, list inputs, ask before heavy jobs, and verify all outputs.
-- If Gemma is not needed for the current session, you can skip this lab and use Labs 1–3 directly.
+- If Gemma/Pi is not needed for the current session, you can skip this lab and use Labs 1–3 directly.
 
 ## Included lab assets
 
 - `notebooks/01_comfy3d_remesher_cli.ipynb` — CLI-driven ComfyUI generation, reconstruction, rigging, cleanup, and Mixamo retargeting.
 - `notebooks/02_sketch_qwen_edit_to_rigged_kick.ipynb` — pencil sketch through Qwen image edit, GLB reconstruction, rigging, cleanup, and kick animation.
 - `notebooks/03_upload_image_and_mixamo_retarget.ipynb` — upload widgets for custom character images and optional Mixamo FBX retargeting.
-- `notebooks/04_ollama_gemma_pidev.ipynb` — local Ollama/Gemma and pi.dev exploration for agent-assisted iteration.
+- `notebooks/04_ollama_gemma_pidev.ipynb` — local Ollama/Gemma and Ollama-managed Pi exploration for agent-assisted iteration.
 - `examples/` — ComfyUI API prompt JSON templates for generation, reconstruction, and rigging.
 - `docker/demo-jupyter/scripts/` — helper scripts used by the notebooks for Comfy3D startup, model downloads, Ollama/Gemma setup, skin cleanup, and retargeting.
 
@@ -386,13 +387,12 @@ A successful lab run should produce:
 ## Troubleshooting
 
 - **Connection errors:** verify `config.json`, ComfyUI host/port, and that the server is reachable from the machine running the CLI.
-- **RunPod notebook cannot reach ComfyUI:** confirm the pod was recreated with the current combined image and that `config.json` uses `http://127.0.0.1:8188/`.
-- **`failed to connect to the docker API at unix:///var/run/docker.sock`:** you are likely running an older control-image pod. Recreate with the current combined `michaelgold/remesher` image, or start Comfy3D separately and set `COMFY3D_SERVER_URL=https://<your-comfy3d-endpoint>/` before running `docker/demo-jupyter/scripts/pull-comfy3d.sh`.
+- **RunPod notebook cannot reach ComfyUI:** confirm the Comfy3D container started from the notebook and that the notebook config uses `http://host.docker.internal:8188/`.
 - **Workflow JSON errors:** use ComfyUI API prompt JSON, not the UI workflow export format with `nodes` and `links`.
 - **Missing node/model errors:** install the ComfyUI custom nodes and model weights required by the selected workflow.
 - **Hugging Face gated model errors:** paste a valid read token starting with `hf_` and request access to gated model repositories before rerunning the downloader.
 - **No GLB output:** inspect the ComfyUI prompt history for the submitted prompt ID and confirm the workflow writes a `.glb` artifact.
-- **GLB has no textures after rigging:** use the texture-preserving rig defaults (`--target-face-count 80000 --embed-textures`) or raise `--target-face-count` for already-high-resolution source meshes; avoid the old `50000`/no-embed path because it can strip `TEXCOORD_0`, materials, images, and textures.
+- **GLB has no textures after rigging:** rerun `rig-glb` with `--embed-textures` and consider increasing `--target-face-count`.
 - **Animated head/neck deformation:** run the conservative `skin-cleanup-glb` step for `head_top,head_neck` before retargeting.
 - **Large artifacts:** reduce target face count or texture size when moving outputs through size-limited channels.
 
