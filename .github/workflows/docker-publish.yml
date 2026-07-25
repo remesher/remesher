@@ -84,7 +84,8 @@ jobs:
             "${IMAGE_NAME}:${{ steps.meta.outputs.image_tag }}"
 
           for attempt in $(seq 1 90); do
-            if docker logs "${TEST_CONTAINER}" 2>&1 | tee logs.txt | grep -q "Starting JupyterLab" && \
+            docker logs "${TEST_CONTAINER}" > logs.txt 2>&1 || true
+            if grep -q "Starting JupyterLab" logs.txt && \
                docker exec "${TEST_CONTAINER}" test -f /workspace/remesher/notebooks/01_comfy3d_remesher_cli.ipynb && \
                docker exec "${TEST_CONTAINER}" test -f /workspace/remesher/notebooks/04_ollama_gemma_pidev.ipynb && \
                docker exec "${TEST_CONTAINER}" test -f /workspace/remesher/docker/demo-jupyter/scripts/pull-comfy3d.sh && \
