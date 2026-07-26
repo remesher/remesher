@@ -24,6 +24,7 @@ DEFAULT_RIG_GLB_WORKFLOW = Path("examples/rig_glb_mia.json")
 DEFAULT_RETARGET_WORKER = Path("docker/demo-jupyter/scripts/arp_retarget_worker.py")
 DEFAULT_SKIN_CLEANUP_WORKER = Path("docker/demo-jupyter/scripts/anatomical_cleanup_worker.py")
 DEFAULT_USDZ_WORKER = Path("docker/demo-jupyter/scripts/glb_to_usdz_worker.py")
+DEFAULT_POSE_GLB_WORKER = Path("docker/demo-jupyter/scripts/pose_glb_worker.py")
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 GLB_EXTENSIONS = {".glb"}
 USDZ_EXTENSIONS = {".usdz"}
@@ -2094,6 +2095,57 @@ def glb_to_usdz(
     if not output_usdz.exists():
         raise typer.BadParameter(f"USDZ worker completed but did not create {output_usdz}")
     typer.echo(f"USDZ: {output_usdz}")
+    typer.echo(f"Summary JSON: {summary_json}")
+
+
+@app.command("pose-glb")
+def pose_glb_command(
+    rigged_glb: Path = typer.Option(..., "--rigged-glb", "--input-glb", help="Rigged/skinned GLB to pose."),
+    pose_json: Path = typer.Option(..., "--pose-json", help="JSON file with per-bone rotations."),
+    output_name: str = typer.Option("posed", help="Output GLB basename without extension."),
+    out_dir: Path = typer.Option(Path("workspace/output/comfyui/posed"), help="Directory for posed GLB and summary JSON."),
+    worker_file: Path = typer.Option(DEFAULT_POSE_GLB_WORKER, help="Isolated pose bpy worker script."),
+    bpy_container: str = typer.Option("remesher-comfy3d", help="Docker container to use when local Python cannot import bpy."),
+    validate: bool = typer.Option(True, help="Re-import posed GLB and validate structure."),
+    disable_bone_shape: bool = typer.Option(True, help="Disable Blender glTF custom bone-shape helpers on source/reimport."),
+    export_animation: bool = typer.Option(False, help="Export existing animation data along with the edited rest pose."),
+) -> None:
+    """Apply a simple bone-rotation pose JSON to a rigged GLB."""
+    if not rigged_glb.exists() or not rigged_glb.is_file():
+        raise typer.BadParameter(f"Rigged GLB not found: {rigged_glb}")
+    if not pose_json.exists() or not pose_json.is_file():
+        raise typer.BadParameter(f"Pose JSON not found: {pose_json}")
+    if not worker_file.exists() and not worker_file.is_absolute():
+        repo_candidate = Path(__file__).resolve().parents[2] / worker_file
+        if repo_candidate.exists():
+            worker_file = repo_candidate
+    if not worker_file.exists() or not worker_file.is_file():
+        raise typer.BadParameter(f"Pose worker not found: {worker_file}")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    output_base = output_name if output_name.lower().endswith(".glb") else f"{output_name}.glb"
+    output_glb = out_dir / Path(output_base).name
+    summary_json = out_dir / f"{output_glb.name}.json"
+
+    extra_args: list[str] = []
+    if not validate:
+        extra_args.append("--no-validate")
+    if not disable_bone_shape:
+        extra_args.append("--keep-bone-shapes")
+    if export_animation:
+        extra_args.append("--export-animation")
+
+    _run_bpy_worker(
+        worker_file=worker_file,
+        positional_inputs=[rigged_glb, pose_json],
+        positional_outputs=[output_glb],
+        extra_args=extra_args,
+        summary_json=summary_json,
+        bpy_container=bpy_container,
+    )
+    if not output_glb.exists():
+        raise typer.BadParameter(f"Pose worker completed but did not create {output_glb}")
+    typer.echo(f"Posed GLB: {output_glb}")
     typer.echo(f"Summary JSON: {summary_json}")
 
 
