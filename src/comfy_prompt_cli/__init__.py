@@ -23,8 +23,10 @@ DEFAULT_IMAGE_TO_GLB_WORKFLOW = Path("examples/img_to_trellis2.json")
 DEFAULT_RIG_GLB_WORKFLOW = Path("examples/rig_glb_mia.json")
 DEFAULT_RETARGET_WORKER = Path("docker/demo-jupyter/scripts/arp_retarget_worker.py")
 DEFAULT_SKIN_CLEANUP_WORKER = Path("docker/demo-jupyter/scripts/anatomical_cleanup_worker.py")
+DEFAULT_USDZ_WORKER = Path("docker/demo-jupyter/scripts/glb_to_usdz_worker.py")
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 GLB_EXTENSIONS = {".glb"}
+USDZ_EXTENSIONS = {".usdz"}
 
 
 class AppConfig(BaseModel):
@@ -2043,6 +2045,56 @@ def retarget_glb(
         summary_host.write_text(json.dumps({"output_glb": str(output_host), "worker_stdout": process.stdout}, indent=2))
     typer.echo(f"Animated GLB: {output_host}")
     typer.echo(f"Retarget summary: {summary_host}")
+
+
+@app.command("glb-to-usdz")
+def glb_to_usdz(
+    glb: Path = typer.Option(..., "--glb", "--input-glb", help="GLB to convert to USDZ."),
+    output_name: str | None = typer.Option(None, "--output-name", help="Output USDZ file/base name."),
+    out_dir: Path = typer.Option(Path("workspace/output/comfyui/usdz"), help="Directory for USDZ and summary JSON."),
+    worker_file: Path = typer.Option(DEFAULT_USDZ_WORKER, help="Isolated GLB-to-USDZ bpy worker script."),
+    bpy_container: str = typer.Option("remesher-comfy3d", help="Docker container to use when local Python cannot import bpy."),
+    validate: bool = typer.Option(True, help="Re-import exported USDZ and validate structure."),
+    disable_bone_shape: bool = typer.Option(True, help="Disable Blender glTF custom bone-shape helpers on source import."),
+    export_animation: bool = typer.Option(True, help="Export animation data when present."),
+) -> None:
+    """Convert a GLB to USDZ with an isolated Blender/bpy worker."""
+    if not glb.exists() or not glb.is_file():
+        raise typer.BadParameter(f"Input GLB not found: {glb}")
+    if not worker_file.exists() and not worker_file.is_absolute():
+        repo_candidate = Path(__file__).resolve().parents[2] / worker_file
+        if repo_candidate.exists():
+            worker_file = repo_candidate
+    if not worker_file.exists() or not worker_file.is_file():
+        raise typer.BadParameter(f"USDZ worker not found: {worker_file}")
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    output_base = output_name or f"{glb.stem}.usdz"
+    if not output_base.lower().endswith(".usdz"):
+        output_base = f"{output_base}.usdz"
+    output_usdz = out_dir / Path(output_base).name
+    summary_json = out_dir / f"{output_usdz.name}.json"
+
+    extra_args: list[str] = []
+    if not validate:
+        extra_args.append("--no-validate")
+    if not disable_bone_shape:
+        extra_args.append("--keep-bone-shapes")
+    if not export_animation:
+        extra_args.append("--no-animation")
+
+    _run_bpy_worker(
+        worker_file=worker_file,
+        positional_inputs=[glb],
+        positional_outputs=[output_usdz],
+        extra_args=extra_args,
+        summary_json=summary_json,
+        bpy_container=bpy_container,
+    )
+    if not output_usdz.exists():
+        raise typer.BadParameter(f"USDZ worker completed but did not create {output_usdz}")
+    typer.echo(f"USDZ: {output_usdz}")
+    typer.echo(f"Summary JSON: {summary_json}")
 
 
 def main() -> None:

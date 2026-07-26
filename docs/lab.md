@@ -25,9 +25,9 @@ The template starts the Remesher notebook/control environment. It is designed to
 4. Deploy the pod and wait for it to finish booting.
 5. Open the pod's JupyterLab endpoint on port `8888`.
 6. In JupyterLab, browse to `/workspace/remesher/notebooks`.
-7. Start with `01_comfy3d_remesher_cli.ipynb` unless you specifically want one of the later labs.
+7. Start with `00_comfy3d_setup_models.ipynb` to configure Comfy3D and the model cache, then run `01_comfy3d_remesher_cli.ipynb` or one of the later workflow labs.
 8. If the notebook asks for a Hugging Face token, paste a **read** token. DINOv3 and other gated assets require that token and may also require requesting model access on Hugging Face.
-9. Run the notebook cells from top to bottom. The setup cells configure `config.json`, pull/start Comfy3D, download or verify the required models, and run `comfy-prompt-cli health` before the heavier generation steps.
+9. Run notebook 00 cells from top to bottom. The setup cells configure `config.json`, start or connect to Comfy3D, download or verify the required models, and run `comfy-prompt-cli health` before the heavier generation steps in notebooks 01–03.
 
 ### What the RunPod image provides
 
@@ -181,7 +181,18 @@ uv run comfy-prompt-cli retarget-glb \
   --out-dir downloads/lab
 ```
 
-### 8. End-to-end text to rigged GLB
+### 8. Export USDZ
+
+Convert the animated or rigged GLB into USDZ for Apple/AR workflows:
+
+```bash
+uv run comfy-prompt-cli glb-to-usdz \
+  --glb downloads/lab/wrestler_kick.glb \
+  --output-name wrestler_kick.usdz \
+  --out-dir downloads/lab
+```
+
+### 9. End-to-end text to rigged GLB
 
 For a single-pass smoke test, generate and rig from one prompt:
 
@@ -191,36 +202,53 @@ uv run comfy-prompt-cli text-to-rigged-glb \
   --out-dir downloads/lab-smoke
 ```
 
-## Lab 1 — Comfy3D, model setup, and the Remesher CLI
+## Lab 0 — Comfy3D setup and model cache
 
-Notebook: `notebooks/01_comfy3d_remesher_cli.ipynb`
+Notebook: `notebooks/00_comfy3d_setup_models.ipynb`
 
-Lab 1 is the baseline end-to-end walkthrough. Run it first to confirm the pod, Comfy3D container, model cache, and CLI are working together.
+Lab 0 is the shared initialization notebook. Run it once per pod/machine before Labs 1–3 so the workflow notebooks can focus on asset generation instead of repeating container startup and model downloads.
 
 ### Goals
 
 - Start from a clean notebook session.
 - Configure the Remesher CLI to talk to ComfyUI.
-- Pull/start the `michaelgold/comfy3d` runtime container.
+- Start or connect to the Comfy3D runtime.
 - Download or verify the exact model groups used by Remesher examples.
-- Run a text-to-image prompt.
-- Convert an image into a GLB.
-- Rig the GLB, clean skin weights, and apply a Mixamo kick animation.
+- Run `comfy-prompt-cli --help` and `comfy-prompt-cli health --config config.json`.
 
 ### Main steps
 
 1. Create `/workspace/input`, `/workspace/output`, and `/workspace/models`.
 2. Optionally enter a Hugging Face read token for gated model downloads.
-3. Write `config.json` with `http://host.docker.internal:8188/` as the ComfyUI server.
-4. Run `docker/demo-jupyter/scripts/pull-comfy3d.sh` to pull/start Comfy3D.
-5. Run the Remesher model downloader inside the Comfy3D container. The default model group is `all`; targeted groups include `qwenimage2512`, `qwenimageedit2511`, `trellis2`, `dinov3`, and `mia`.
-6. Run `comfy-prompt-cli --help` and `comfy-prompt-cli health --config config.json`.
-7. Generate a front-facing full-body character image from the included prompt.
-8. Use that image, or an uploaded `/workspace/input/character.png`, as the input to `image-to-glb`.
-9. Rig the generated GLB with `rig-glb` and `--embed-textures`.
-10. Run conservative `skin-cleanup-glb` for `head_top,head_neck`.
-11. Retarget the cleaned rigged GLB with the default `Mma_Kick.fbx` animation.
-12. Preview GLB outputs in the notebook with the embedded `<model-viewer>` helper.
+3. Write `config.json` for the ComfyUI server.
+4. Run `docker/demo-jupyter/scripts/pull-comfy3d.sh` to start or connect to Comfy3D.
+5. Run the Remesher model downloader. The default model group is `all`; targeted groups include `qwenimage2512`, `qwenimageedit2511`, `trellis2`, `dinov3`, and `mia`.
+6. Run the CLI/ComfyUI health checks.
+
+## Lab 1 — Remesher CLI asset pipeline + USDZ export
+
+Notebook: `notebooks/01_comfy3d_remesher_cli.ipynb`
+
+Lab 1 is the baseline end-to-end walkthrough after Lab 0 has configured the pod, Comfy3D runtime, model cache, and CLI.
+
+### Goals
+
+- Run a text-to-image prompt.
+- Convert an image into a GLB.
+- Rig the GLB, clean skin weights, and apply a Mixamo kick animation.
+- Export the animated GLB to USDZ.
+
+### Main steps
+
+1. Run Lab 0 first if `config.json`, Comfy3D, or the model cache is not ready.
+2. Run `comfy-prompt-cli --help` and `comfy-prompt-cli health --config config.json`.
+3. Generate a front-facing full-body character image from the included prompt.
+4. Use that image, or an uploaded `/workspace/input/character.png`, as the input to `image-to-glb`.
+5. Rig the generated GLB with `rig-glb` and `--embed-textures`.
+6. Run conservative `skin-cleanup-glb` for `head_top,head_neck`.
+7. Retarget the cleaned rigged GLB with the default `Mma_Kick.fbx` animation.
+8. Preview GLB outputs in the notebook with the embedded `<model-viewer>` helper.
+9. Export the animated GLB to USDZ with `comfy-prompt-cli glb-to-usdz`.
 
 ### Expected outputs
 
@@ -228,6 +256,7 @@ Lab 1 is the baseline end-to-end walkthrough. Run it first to confirm the pod, C
 - Mesh GLBs under `/workspace/output/glbs`.
 - Rigged and head-fixed GLBs under `/workspace/output/rigged`.
 - Animated GLBs and retarget summaries under `/workspace/output/comfyui/animated`.
+- USDZ exports and validation summaries under `/workspace/output/comfyui/usdz`.
 
 ### Tips
 
@@ -251,16 +280,17 @@ Lab 2 starts from the included pencil sketch and shows how Qwen image editing ca
 
 ### Main steps
 
-1. Use `workspace/input/demo/pencil_sketch_character.jpg` as the source image.
-2. Review the image-edit prompt, which asks for a centered, full-body, orthographic, 3D cartoon wrestler reference on a plain white background.
-3. Run `comfy-prompt-cli image-text-to-image` with the sketch and prompt.
-4. Inspect the original sketch and Qwen-edited output side by side.
-5. Run `image-to-glb` at the default `80000` target faces.
-6. Preview the generated GLB.
-7. Run `rig-glb` with `--embed-textures`.
-8. Run conservative `skin-cleanup-glb` on the head/top zones.
-9. Retarget the cleaned rigged GLB with the default Mixamo `Mma_Kick.fbx` animation.
-10. Preview the animated GLB in the notebook.
+1. Run Lab 0 first if `config.json`, Comfy3D, or the model cache is not ready.
+2. Use `workspace/input/demo/pencil_sketch_character.jpg` as the source image.
+3. Review the image-edit prompt, which asks for a centered, full-body, orthographic, 3D cartoon wrestler reference on a plain white background.
+4. Run `comfy-prompt-cli image-text-to-image` with the sketch and prompt.
+5. Inspect the original sketch and Qwen-edited output side by side.
+6. Run `image-to-glb` at the default `80000` target faces.
+7. Preview the generated GLB.
+8. Run `rig-glb` with `--embed-textures`.
+9. Run conservative `skin-cleanup-glb` on the head/top zones.
+10. Retarget the cleaned rigged GLB with the default Mixamo `Mma_Kick.fbx` animation.
+11. Preview the animated GLB in the notebook.
 
 ### Expected outputs
 
@@ -290,15 +320,16 @@ Lab 3 replaces the canned sketch with upload widgets so you can test your own ch
 
 ### Main steps
 
-1. Run the setup cells to configure `config.json`, start Comfy3D, verify models, and check CLI health.
-2. Use the `Browse image` widget to select a character image.
-3. Optionally use the `Browse FBX` widget to select a Mixamo animation file.
-4. Click **Save uploads**. The notebook saves files under `/workspace/input/uploads`.
-5. Preview the uploaded image and confirm which FBX will be used.
-6. Run `image-to-glb` with a filename prefix based on the uploaded image name.
-7. Run `rig-glb` and conservative head-weight cleanup.
-8. Run `retarget-glb` using the uploaded FBX or the default `Mma_Kick.fbx`.
-9. Preview and download the animated GLB.
+1. Run Lab 0 first if `config.json`, Comfy3D, or the model cache is not ready.
+2. Run the notebook health-check cell.
+3. Use the `Browse image` widget to select a character image.
+4. Optionally use the `Browse FBX` widget to select a Mixamo animation file.
+5. Click **Save uploads**. The notebook saves files under `/workspace/input/uploads`.
+6. Preview the uploaded image and confirm which FBX will be used.
+7. Run `image-to-glb` with a filename prefix based on the uploaded image name.
+8. Run `rig-glb` and conservative head-weight cleanup.
+9. Run `retarget-glb` using the uploaded FBX or the default `Mma_Kick.fbx`.
+10. Preview and download the animated GLB.
 
 ### Expected outputs
 
@@ -360,18 +391,19 @@ Save outputs under /workspace/output and verify files are non-empty.
 
 ### Tips
 
-- Lab 4 is for agent-assisted operation, not the primary asset pipeline. Run Lab 1 first if you have not verified Comfy3D and the model cache yet.
+- Lab 4 is for agent-assisted operation, not the primary asset pipeline. Run Lab 0 first if you have not verified Comfy3D and the model cache yet.
 - Keep agent instructions conservative: health check first, list inputs, ask before heavy jobs, and verify all outputs.
 - If Gemma/Pi is not needed for the current session, you can skip this lab and use Labs 1–3 directly.
 
 ## Included lab assets
 
-- `notebooks/01_comfy3d_remesher_cli.ipynb` — CLI-driven ComfyUI generation, reconstruction, rigging, cleanup, and Mixamo retargeting.
+- `notebooks/00_comfy3d_setup_models.ipynb` — shared Comfy3D startup/configuration, HF token handling, model download/verification, and CLI health checks.
+- `notebooks/01_comfy3d_remesher_cli.ipynb` — CLI-driven ComfyUI generation, reconstruction, rigging, cleanup, Mixamo retargeting, and USDZ export.
 - `notebooks/02_sketch_qwen_edit_to_rigged_kick.ipynb` — pencil sketch through Qwen image edit, GLB reconstruction, rigging, cleanup, and kick animation.
 - `notebooks/03_upload_image_and_mixamo_retarget.ipynb` — upload widgets for custom character images and optional Mixamo FBX retargeting.
 - `notebooks/04_ollama_gemma_pidev.ipynb` — local Ollama/Gemma and Ollama-managed Pi exploration for agent-assisted iteration.
 - `examples/` — ComfyUI API prompt JSON templates for generation, reconstruction, and rigging.
-- `docker/demo-jupyter/scripts/` — helper scripts used by the notebooks for Comfy3D startup, model downloads, Ollama/Gemma setup, skin cleanup, and retargeting.
+- `docker/demo-jupyter/scripts/` — helper scripts used by the notebooks for Comfy3D startup, model downloads, Ollama/Gemma setup, skin cleanup, retargeting, and USDZ export.
 
 ## Output expectations
 
@@ -382,6 +414,7 @@ A successful lab run should produce:
 - A rigged `.glb` suitable for animation or retargeting tests.
 - Optional head-fixed/cleaned rigged GLBs.
 - Optional animated `.glb` files after Mixamo retargeting.
+- Optional `.usdz` exports for Apple/AR workflows.
 - Downloaded artifacts under the selected `--out-dir` or `/workspace/output`.
 
 ## Troubleshooting
