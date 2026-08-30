@@ -1202,6 +1202,17 @@ def _copy_from_container(container: str, source: str, dest: Path) -> None:
     _run_worker_command(["docker", "cp", f"{container}:{source}", str(dest)])
 
 
+def _docker_bpy_exec_prefix(container: str) -> list[str]:
+    """Build a docker exec prefix for a clean isolated Blender process.
+
+    Comfy3D globally preloads Open3D on Linux ARM64 for its static-TLS needs.
+    Blender's bundled OpenVDB/TBB libraries are incompatible with that preload,
+    so bpy workers must start without inheriting it.
+    """
+
+    return ["docker", "exec", "-e", "LD_PRELOAD=", container]
+
+
 def _run_bpy_worker(
     *,
     worker_file: Path,
@@ -1258,9 +1269,7 @@ def _run_bpy_worker(
     try:
         _run_worker_command(
             [
-                "docker",
-                "exec",
-                bpy_container,
+                *_docker_bpy_exec_prefix(bpy_container),
                 "python",
                 remote_worker,
                 *remote_inputs,
@@ -1912,7 +1921,7 @@ def skin_cleanup_glb(
         raise typer.Exit(stage.returncode)
 
     command = [
-        "docker", "exec", container,
+        *_docker_bpy_exec_prefix(container),
         "python3", worker_container,
         input_container,
         output_container,
@@ -2017,7 +2026,7 @@ def retarget_glb(
         raise typer.Exit(stage.returncode)
 
     command = [
-        "docker", "exec", container,
+        *_docker_bpy_exec_prefix(container),
         "python3", worker_container,
         glb_container,
         anim_container,
