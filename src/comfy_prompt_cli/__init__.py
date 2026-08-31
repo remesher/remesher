@@ -532,6 +532,44 @@ def _download_ref(
     out_path.write_bytes(resp.content)
 
 
+def _raise_for_history_error(prompt_id: str, history_item: dict[str, Any]) -> None:
+    status = history_item.get("status")
+    if not isinstance(status, dict):
+        return
+
+    error_payload: dict[str, Any] | None = None
+    messages = status.get("messages")
+    if isinstance(messages, list):
+        for message in messages:
+            if (
+                isinstance(message, list)
+                and len(message) == 2
+                and message[0] == "execution_error"
+                and isinstance(message[1], dict)
+            ):
+                error_payload = message[1]
+                break
+
+    incomplete = status.get("completed") is False
+    if (
+        status.get("status_str") != "error"
+        and error_payload is None
+        and not incomplete
+    ):
+        return
+
+    details = error_payload or {}
+    node = details.get("node_type") or details.get("node_id") or "unknown node"
+    exception_message = details.get("exception_message") or (
+        "history marked execution incomplete"
+        if incomplete
+        else "unknown execution error"
+    )
+    raise typer.BadParameter(
+        f"ComfyUI prompt {prompt_id} failed in {node}: {exception_message}"
+    )
+
+
 async def _wait_for_completion(
     base: str,
     prompt_id: str,
@@ -571,6 +609,7 @@ async def _wait_for_completion(
                 stop_event.set()
                 if ws_task is not None:
                     await ws_task
+                _raise_for_history_error(prompt_id, history_item)
                 return (
                     queue_state if isinstance(queue_state, dict) else {}
                 ), history_item
@@ -630,6 +669,20 @@ def _download_from_history_by_ext(
     return downloaded
 
 
+def _require_downloaded_artifacts(
+    *,
+    prompt_id: str,
+    downloaded: list[Path],
+    extensions: set[str],
+) -> list[Path]:
+    if downloaded:
+        return downloaded
+    expected = ", ".join(sorted(extensions)) or "requested"
+    raise typer.BadParameter(
+        f"ComfyUI prompt {prompt_id} produced no expected artifact ({expected})"
+    )
+
+
 def _submit_wait_and_download(
     *,
     base: str,
@@ -660,8 +713,12 @@ def _submit_wait_and_download(
     )
     typer.echo("Prompt completed.")
     typer.echo(json.dumps({"prompt_id": prompt_id, "queue": queue_state}, indent=2))
-    return _download_from_history_by_ext(
-        base, prompt_id, history_item, out_dir, extensions
+    return _require_downloaded_artifacts(
+        prompt_id=prompt_id,
+        downloaded=_download_from_history_by_ext(
+            base, prompt_id, history_item, out_dir, extensions
+        ),
+        extensions=extensions,
     )
 
 
@@ -701,10 +758,11 @@ def wait_prompt(
     typer.echo(json.dumps({"prompt_id": prompt_id, "queue": queue_state}, indent=2))
 
     if download_glb:
-        downloaded = _download_from_history(base, prompt_id, history_item, out_dir)
-        if not downloaded:
-            typer.echo("No GLB reference found in history outputs.")
-            return
+        downloaded = _require_downloaded_artifacts(
+            prompt_id=prompt_id,
+            downloaded=_download_from_history(base, prompt_id, history_item, out_dir),
+            extensions=GLB_EXTENSIONS,
+        )
         for path in downloaded:
             typer.echo(f"Downloaded {path}")
 
