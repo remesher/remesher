@@ -1945,41 +1945,73 @@ def config_init(
     typer.echo(f"Wrote {out}")
 
 
+def _worker_output_candidates(
+    *,
+    input_dir: Path,
+    subfolder: str,
+    filename: str,
+) -> tuple[Path, Path]:
+    output_root = input_dir.parent / "output"
+    return (
+        output_root / "comfyui" / subfolder / filename,
+        output_root / subfolder / filename,
+    )
+
+
+def _clear_worker_output_candidates(
+    *,
+    input_dir: Path,
+    subfolder: str,
+    filenames: tuple[str, ...],
+) -> None:
+    """Remove stale worker intermediates before launching a new invocation."""
+    for filename in filenames:
+        for candidate in _worker_output_candidates(
+            input_dir=input_dir,
+            subfolder=subfolder,
+            filename=filename,
+        ):
+            try:
+                candidate.unlink(missing_ok=True)
+            except PermissionError:
+                # Docker-created files may be root-owned; the active command
+                # also clears them through docker exec before worker launch.
+                continue
+
+
 def _recover_worker_output(
     *,
     input_dir: Path,
     subfolder: str,
     filename: str,
     destination: Path,
-    not_before_ns: int = 0,
 ) -> Path | None:
     """Copy a worker artifact from either supported Comfy host-mount layout."""
     import shutil
 
-    output_root = input_dir.parent / "output"
-    candidates = (
-        output_root / "comfyui" / subfolder / filename,
-        output_root / subfolder / filename,
-    )
-    fresh_candidates = [
+    candidates = [
         candidate
-        for candidate in candidates
-        if candidate.exists() and candidate.stat().st_mtime_ns >= not_before_ns
+        for candidate in _worker_output_candidates(
+            input_dir=input_dir,
+            subfolder=subfolder,
+            filename=filename,
+        )
+        if candidate.exists()
     ]
-    if not fresh_candidates:
+    if not candidates:
         return None
     destination_resolved = destination.resolve()
     if destination.exists():
         matching_destination = [
             candidate
-            for candidate in fresh_candidates
+            for candidate in candidates
             if candidate.resolve() == destination_resolved
         ]
         if not matching_destination:
             return None
         candidate = max(matching_destination, key=lambda path: path.stat().st_mtime_ns)
     else:
-        candidate = max(fresh_candidates, key=lambda path: path.stat().st_mtime_ns)
+        candidate = max(candidates, key=lambda path: path.stat().st_mtime_ns)
     destination.parent.mkdir(parents=True, exist_ok=True)
     if candidate.resolve() != destination_resolved:
         shutil.copy2(candidate, destination)
@@ -2002,7 +2034,6 @@ def skin_cleanup_glb(
     """Run conservative anatomical skin-weight cleanup on a GLB in the Comfy3D container."""
     import shutil
     import subprocess
-    import time
 
     if not input_glb.exists():
         raise typer.BadParameter(f"Input GLB not found: {input_glb}")
@@ -2040,7 +2071,6 @@ def skin_cleanup_glb(
             "Refusing to overwrite existing cleanup output(s): "
             + ", ".join(str(path) for path in existing_outputs)
         )
-
     staged_worker_container = f"/app/comfy/input/scripts/{staged_worker.name}"
     worker_container = "/app/comfy/custom_nodes/ComfyUI-UniRig/nodes/anatomical_cleanup_worker.py"
     input_container = f"/app/comfy/input/skin_cleanup/{staged_glb.name}"
@@ -2050,6 +2080,28 @@ def skin_cleanup_glb(
     # Write via /app/comfy/output/skin_cleanup, then copy back through the Jupyter-visible host path.
     output_container = f"/app/comfy/output/skin_cleanup/{output_host.name}"
     summary_container = f"/app/comfy/output/skin_cleanup/{summary_host.name}"
+
+    container_stale_outputs = [
+        output_container,
+        summary_container,
+        f"/app/comfy/output/comfyui/skin_cleanup/{output_host.name}",
+        f"/app/comfy/output/comfyui/skin_cleanup/{summary_host.name}",
+    ]
+    clear = subprocess.run(
+        ["docker", "exec", container, "rm", "-f", *container_stale_outputs],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if clear.returncode != 0:
+        if clear.stderr:
+            typer.echo(clear.stderr.rstrip(), err=True)
+        raise typer.Exit(clear.returncode)
+    _clear_worker_output_candidates(
+        input_dir=input_dir,
+        subfolder="skin_cleanup",
+        filenames=(output_host.name, summary_host.name),
+    )
 
     staged_helper_container = f"/app/comfy/input/scripts/{staged_helper.name}"
     helper_container = "/app/comfy/custom_nodes/ComfyUI-UniRig/nodes/anatomical_skinning.py"
@@ -2074,7 +2126,6 @@ def skin_cleanup_glb(
         command.append("--no-validate")
     typer.echo("Running anatomical skin cleanup worker:")
     typer.echo(" ".join(command))
-    worker_started_ns = time.time_ns()
     process = subprocess.run(command, capture_output=True, text=True, timeout=1200)
     if process.stdout:
         typer.echo(process.stdout.rstrip())
@@ -2089,14 +2140,12 @@ def skin_cleanup_glb(
         subfolder="skin_cleanup",
         filename=output_host.name,
         destination=output_host,
-        not_before_ns=worker_started_ns,
     )
     recovered_summary = _recover_worker_output(
         input_dir=input_dir,
         subfolder="skin_cleanup",
         filename=summary_host.name,
         destination=summary_host,
-        not_before_ns=worker_started_ns,
     )
     if recovered_glb is None or not output_host.exists():
         raise typer.BadParameter(f"Skin cleanup completed but output was not found: {output_host}")

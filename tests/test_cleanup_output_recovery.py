@@ -4,7 +4,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 import comfy_prompt_cli as cli
-from comfy_prompt_cli import _recover_worker_output, app
+from comfy_prompt_cli import _clear_worker_output_candidates, _recover_worker_output, app
 
 
 def test_recover_worker_output_from_direct_docker_output_layout(tmp_path):
@@ -67,7 +67,6 @@ def test_recover_worker_output_ignores_stale_candidate(tmp_path):
         subfolder="skin_cleanup",
         filename="robot.glb",
         destination=destination,
-        not_before_ns=150,
     )
 
     assert recovered == fresh
@@ -89,7 +88,6 @@ def test_recover_worker_output_does_not_accept_preexisting_destination(tmp_path)
         subfolder="skin_cleanup",
         filename="robot.glb",
         destination=destination,
-        not_before_ns=150,
     )
 
     assert recovered is None
@@ -133,3 +131,28 @@ def test_skin_cleanup_rejects_existing_output_before_worker(tmp_path, monkeypatc
     assert result.exit_code != 0
     assert "Refusing to overwrite" in result.output
     assert subprocess_called is False
+
+
+def test_clear_worker_output_candidates_removes_both_layouts(tmp_path):
+    input_dir = tmp_path / "docker" / "input"
+    direct = tmp_path / "docker" / "output" / "skin_cleanup" / "robot.glb"
+    notebook = (
+        tmp_path
+        / "docker"
+        / "output"
+        / "comfyui"
+        / "skin_cleanup"
+        / "robot.glb"
+    )
+    for path in (direct, notebook):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"stale")
+
+    _clear_worker_output_candidates(
+        input_dir=input_dir,
+        subfolder="skin_cleanup",
+        filenames=("robot.glb",),
+    )
+
+    assert not direct.exists()
+    assert not notebook.exists()
