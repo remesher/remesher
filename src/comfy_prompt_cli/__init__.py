@@ -979,6 +979,11 @@ def image_text_to_image(
         typer.echo(f"Downloaded {path}")
 
 
+def _subject_scale_label(subject_scale: float) -> str:
+    """Return a collision-resistant filename label for a validated scale."""
+    return str(subject_scale).replace(".", "p")
+
+
 @app.command("pad-tpose-image")
 def pad_tpose_image(
     image: Path = typer.Option(..., exists=True, readable=True, help="Source T-pose image."),
@@ -1035,7 +1040,7 @@ def image_to_glb(
 
     upload_image = image
     if subject_scale < 1.0:
-        scale_label = f"{subject_scale:.2f}".replace(".", "p")
+        scale_label = _subject_scale_label(subject_scale)
         upload_image = out_dir / "preprocessed" / f"{image.stem}_padded_{scale_label}.png"
         try:
             pad_image_on_canvas(
@@ -2093,7 +2098,7 @@ def skin_cleanup_glb(
         f"/app/comfy/output/comfyui/skin_cleanup/{summary_host.name}",
     ]
     clear = subprocess.run(
-        ["docker", "exec", container, "rm", "-f", *container_stale_outputs],
+        ["docker", "exec", container, "rm", "-f", "--", *container_stale_outputs],
         capture_output=True,
         text=True,
         timeout=60,

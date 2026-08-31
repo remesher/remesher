@@ -6,7 +6,7 @@ from PIL import Image, ImageChops
 from typer.testing import CliRunner
 
 import comfy_prompt_cli as cli
-from comfy_prompt_cli import app
+from comfy_prompt_cli import _subject_scale_label, app
 from comfy_prompt_cli.image_padding import pad_image_on_canvas
 
 
@@ -263,3 +263,7 @@ def test_image_to_glb_padding_reports_decode_error(tmp_path, monkeypatch):
     assert result.exit_code != 0
     assert "Could not pad image" in result.output
     assert "Traceback" not in result.output
+
+
+def test_subject_scale_labels_do_not_collide_for_distinct_values():
+    assert _subject_scale_label(0.995) != _subject_scale_label(0.999)

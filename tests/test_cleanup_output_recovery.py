@@ -205,3 +205,54 @@ def test_skin_cleanup_local_rejects_existing_output_before_worker(tmp_path, monk
     assert result.exit_code != 0
     assert "Refusing to overwrite" in result.output
     assert worker_called is False
+
+
+def test_skin_cleanup_docker_clear_uses_end_of_options_marker(tmp_path, monkeypatch):
+    source = tmp_path / "source.glb"
+    source.write_bytes(b"source")
+    worker = tmp_path / "worker.py"
+    worker.write_text("# worker")
+    calls = []
+
+    class Result:
+        stdout = ""
+        stderr = ""
+
+        def __init__(self, returncode):
+            self.returncode = returncode
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return Result(0 if len(calls) == 1 else 1)
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_run)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "skin-cleanup-glb",
+            "--input-glb",
+            str(source),
+            "--output-name",
+            "-robot",
+            "--worker-file",
+            str(worker),
+            "--container",
+            "test-container",
+            "--input-dir",
+            str(tmp_path / "input"),
+            "--out-dir",
+            str(tmp_path / "requested"),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert calls[0][:7] == [
+        "docker",
+        "exec",
+        "test-container",
+        "rm",
+        "-f",
+        "--",
+        "/app/comfy/output/skin_cleanup/-robot.glb",
+    ]
