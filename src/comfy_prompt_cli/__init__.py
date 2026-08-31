@@ -1968,9 +1968,20 @@ def _recover_worker_output(
     ]
     if not fresh_candidates:
         return None
-    candidate = max(fresh_candidates, key=lambda path: path.stat().st_mtime_ns)
+    destination_resolved = destination.resolve()
+    if destination.exists():
+        matching_destination = [
+            candidate
+            for candidate in fresh_candidates
+            if candidate.resolve() == destination_resolved
+        ]
+        if not matching_destination:
+            return None
+        candidate = max(matching_destination, key=lambda path: path.stat().st_mtime_ns)
+    else:
+        candidate = max(fresh_candidates, key=lambda path: path.stat().st_mtime_ns)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    if candidate.resolve() != destination.resolve():
+    if candidate.resolve() != destination_resolved:
         shutil.copy2(candidate, destination)
     return candidate
 
@@ -2023,6 +2034,12 @@ def skin_cleanup_glb(
         output_base = output_base[:-4]
     output_host = out_dir / f"{output_base}.glb"
     summary_host = out_dir / f"{output_base}.skin_cleanup.json"
+    existing_outputs = [path for path in (output_host, summary_host) if path.exists()]
+    if existing_outputs:
+        raise typer.BadParameter(
+            "Refusing to overwrite existing cleanup output(s): "
+            + ", ".join(str(path) for path in existing_outputs)
+        )
 
     staged_worker_container = f"/app/comfy/input/scripts/{staged_worker.name}"
     worker_container = "/app/comfy/custom_nodes/ComfyUI-UniRig/nodes/anatomical_cleanup_worker.py"
