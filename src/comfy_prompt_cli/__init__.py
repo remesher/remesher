@@ -1378,8 +1378,8 @@ def _run_bpy_worker(
         subprocess.run(["docker", "exec", bpy_container, "rm", "-rf", remote_dir], check=False)
 
 
-@app.command("skin-cleanup-glb")
-def skin_cleanup_glb(
+@app.command("skin-cleanup-glb-local")
+def skin_cleanup_glb_local(
     input_glb: Path = typer.Option(..., "--input-glb", help="Rigged GLB to clean"),
     output_name: str = typer.Option(..., help="Output GLB basename without extension"),
     out_dir: Path = typer.Option(Path("downloads"), help="Directory for cleaned GLB and summary JSON"),
@@ -2074,7 +2074,6 @@ def skin_cleanup_glb(
     staged_worker_container = f"/app/comfy/input/scripts/{staged_worker.name}"
     worker_container = "/app/comfy/custom_nodes/ComfyUI-UniRig/nodes/anatomical_cleanup_worker.py"
     input_container = f"/app/comfy/input/skin_cleanup/{staged_glb.name}"
-    output_container = f"/app/comfy/output/../input/skin_cleanup_unused"
     # remesher-comfy3d maps host workspace/output/comfyui to /app/comfy/output.
     # If the requested out_dir is /workspace/output/rigged, it is not directly mounted.
     # Write via /app/comfy/output/skin_cleanup, then copy back through the Jupyter-visible host path.

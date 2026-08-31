@@ -156,3 +156,15 @@ def test_clear_worker_output_candidates_removes_both_layouts(tmp_path):
 
     assert not direct.exists()
     assert not notebook.exists()
+
+
+def test_skin_cleanup_commands_have_distinct_help_surfaces():
+    runner = CliRunner()
+
+    container_result = runner.invoke(app, ["skin-cleanup-glb", "--help"])
+    local_result = runner.invoke(app, ["skin-cleanup-glb-local", "--help"])
+
+    assert container_result.exit_code == 0
+    assert "--input-dir" in container_result.output
+    assert local_result.exit_code == 0
+    assert "--bpy-container" in local_result.output
