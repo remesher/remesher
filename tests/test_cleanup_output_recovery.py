@@ -1,10 +1,16 @@
 import os
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 import comfy_prompt_cli as cli
-from comfy_prompt_cli import _clear_worker_output_candidates, _recover_worker_output, app
+from comfy_prompt_cli import (
+    _cleanup_output_base_name,
+    _clear_worker_output_candidates,
+    _recover_worker_output,
+    app,
+)
 
 
 def test_recover_worker_output_from_direct_docker_output_layout(tmp_path):
@@ -256,3 +262,16 @@ def test_skin_cleanup_docker_clear_uses_end_of_options_marker(tmp_path, monkeypa
         "--",
         "/app/comfy/output/skin_cleanup/-robot.glb",
     ]
+
+
+@pytest.mark.parametrize(
+    "output_name",
+    ["../outside", "subdir/output", r"subdir\output", ".", "..", ""],
+)
+def test_cleanup_output_base_rejects_non_basename(output_name):
+    with pytest.raises(ValueError, match="base name"):
+        _cleanup_output_base_name(output_name, default="fallback")
+
+
+def test_cleanup_output_base_strips_glb_suffix():
+    assert _cleanup_output_base_name("robot.glb", default="fallback") == "robot"

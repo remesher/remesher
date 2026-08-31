@@ -1383,6 +1383,22 @@ def _run_bpy_worker(
         subprocess.run(["docker", "exec", bpy_container, "rm", "-rf", remote_dir], check=False)
 
 
+def _cleanup_output_base_name(output_name: str | None, *, default: str) -> str:
+    """Normalize a cleanup output basename without permitting directories."""
+    candidate = output_name if output_name is not None else default
+    if candidate.lower().endswith(".glb"):
+        candidate = candidate[:-4]
+    if (
+        not candidate
+        or candidate in {".", ".."}
+        or "/" in candidate
+        or "\\" in candidate
+        or Path(candidate).name != candidate
+    ):
+        raise ValueError("cleanup output name must be a pure base name")
+    return candidate
+
+
 @app.command("skin-cleanup-glb-local")
 def skin_cleanup_glb_local(
     input_glb: Path = typer.Option(..., "--input-glb", help="Rigged GLB to clean"),
@@ -1405,8 +1421,12 @@ def skin_cleanup_glb_local(
     if not worker_file.exists() or not worker_file.is_file():
         raise typer.BadParameter(f"Worker file not found: {worker_file}")
     out_dir.mkdir(parents=True, exist_ok=True)
-    output_glb = out_dir / f"{output_name}.glb"
-    summary_json = out_dir / f"{output_name}.skin_cleanup.json"
+    try:
+        output_base = _cleanup_output_base_name(output_name, default=input_glb.stem)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    output_glb = out_dir / f"{output_base}.glb"
+    summary_json = out_dir / f"{output_base}.skin_cleanup.json"
     existing_outputs = [path for path in (output_glb, summary_json) if path.exists()]
     if existing_outputs:
         raise typer.BadParameter(
@@ -2071,9 +2091,13 @@ def skin_cleanup_glb(
     if helper_file.exists():
         shutil.copy2(helper_file, staged_helper)
 
-    output_base = output_name or f"{input_glb.stem}_headfix"
-    if output_base.lower().endswith(".glb"):
-        output_base = output_base[:-4]
+    try:
+        output_base = _cleanup_output_base_name(
+            output_name,
+            default=f"{input_glb.stem}_headfix",
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     output_host = out_dir / f"{output_base}.glb"
     summary_host = out_dir / f"{output_base}.skin_cleanup.json"
     existing_outputs = [path for path in (output_host, summary_host) if path.exists()]
