@@ -15,6 +15,8 @@ import httpx
 import typer
 from pydantic import BaseModel, HttpUrl, ValidationError
 
+from .image_padding import pad_image_on_canvas
+
 app = typer.Typer(help="Send prompts to a ComfyUI server.")
 CONFIG_PATH = Path("config.json")
 DEFAULT_TEXT_TO_IMAGE_WORKFLOW = Path("examples/qwen_image_2512.json")
@@ -977,6 +979,34 @@ def image_text_to_image(
         typer.echo(f"Downloaded {path}")
 
 
+def _subject_scale_label(subject_scale: float) -> str:
+    """Return a collision-resistant filename label for a validated scale."""
+    return str(subject_scale).replace(".", "p")
+
+
+@app.command("pad-tpose-image")
+def pad_tpose_image(
+    image: Path = typer.Option(..., exists=True, readable=True, help="Source T-pose image."),
+    output: Path | None = typer.Option(None, help="Output PNG path; defaults beside the source."),
+    subject_scale: float = typer.Option(0.65, min=0.1, max=1.0, help="Maximum source extent as a fraction of the square canvas."),
+    canvas_size: int = typer.Option(1024, min=64, help="Square output canvas size in pixels."),
+    background: str = typer.Option("white", help="Pillow-compatible background color."),
+) -> None:
+    """Center a T-pose image on a padded square canvas for safer 3D reconstruction."""
+    destination = output or image.with_name(f"{image.stem}_padded.png")
+    try:
+        padded = pad_image_on_canvas(
+            image,
+            destination,
+            subject_scale=subject_scale,
+            canvas_size=canvas_size,
+            background=background,
+        )
+    except (ValueError, OSError) as exc:
+        raise typer.BadParameter(f"Could not pad image: {exc}") from exc
+    typer.echo(f"Padded T-pose image: {padded}")
+
+
 @app.command("image-to-glb")
 def image_to_glb(
     image: Path = typer.Option(
@@ -994,6 +1024,9 @@ def image_to_glb(
         None, help="Override output filename prefix"
     ),
     texture_seed: int | None = typer.Option(None, help="Override Trellis texture seed"),
+    subject_scale: float = typer.Option(1.0, min=0.1, max=1.0, help="Optionally scale the complete source onto a padded square canvas before upload; use 0.65 for T-pose safety."),
+    padding_canvas_size: int = typer.Option(1024, min=64, help="Canvas size used when --subject-scale is below 1."),
+    padding_background: str = typer.Option("white", help="Background color used for optional source padding."),
     poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
     timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
     verbose: bool = typer.Option(False, help="Show polling progress logs"),
@@ -1005,8 +1038,24 @@ def image_to_glb(
     cfg = _load_config(config)
     base = str(cfg.server_url).rstrip("/")
 
+    upload_image = image
+    if subject_scale < 1.0:
+        scale_label = _subject_scale_label(subject_scale)
+        upload_image = out_dir / "preprocessed" / f"{image.stem}_padded_{scale_label}.png"
+        try:
+            pad_image_on_canvas(
+                image,
+                upload_image,
+                subject_scale=subject_scale,
+                canvas_size=padding_canvas_size,
+                background=padding_background,
+            )
+        except (ValueError, OSError) as exc:
+            raise typer.BadParameter(f"Could not pad image: {exc}") from exc
+        typer.echo(f"Padded input image: {upload_image}")
+
     prompt = _load_prompt_from_file(workflow_file)
-    uploaded_image_ref = _upload_input_image(base, image)
+    uploaded_image_ref = _upload_input_image(base, upload_image)
     updated_nodes = _replace_all_load_image_inputs(prompt, uploaded_image_ref)
     if not updated_nodes:
         raise typer.BadParameter(
@@ -1334,8 +1383,24 @@ def _run_bpy_worker(
         subprocess.run(["docker", "exec", bpy_container, "rm", "-rf", remote_dir], check=False)
 
 
-@app.command("skin-cleanup-glb")
-def skin_cleanup_glb(
+def _cleanup_output_base_name(output_name: str | None, *, default: str) -> str:
+    """Normalize a cleanup output basename without permitting directories."""
+    candidate = output_name if output_name is not None else default
+    if candidate.lower().endswith(".glb"):
+        candidate = candidate[:-4]
+    if (
+        not candidate
+        or candidate in {".", ".."}
+        or "/" in candidate
+        or "\\" in candidate
+        or Path(candidate).name != candidate
+    ):
+        raise ValueError("cleanup output name must be a pure base name")
+    return candidate
+
+
+@app.command("skin-cleanup-glb-local")
+def skin_cleanup_glb_local(
     input_glb: Path = typer.Option(..., "--input-glb", help="Rigged GLB to clean"),
     output_name: str = typer.Option(..., help="Output GLB basename without extension"),
     out_dir: Path = typer.Option(Path("downloads"), help="Directory for cleaned GLB and summary JSON"),
@@ -1356,8 +1421,18 @@ def skin_cleanup_glb(
     if not worker_file.exists() or not worker_file.is_file():
         raise typer.BadParameter(f"Worker file not found: {worker_file}")
     out_dir.mkdir(parents=True, exist_ok=True)
-    output_glb = out_dir / f"{output_name}.glb"
-    summary_json = out_dir / f"{output_name}.skin_cleanup.json"
+    try:
+        output_base = _cleanup_output_base_name(output_name, default=input_glb.stem)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    output_glb = out_dir / f"{output_base}.glb"
+    summary_json = out_dir / f"{output_base}.skin_cleanup.json"
+    existing_outputs = [path for path in (output_glb, summary_json) if path.exists()]
+    if existing_outputs:
+        raise typer.BadParameter(
+            "Refusing to overwrite existing cleanup output(s): "
+            + ", ".join(str(path) for path in existing_outputs)
+        )
     extra_args = [
         "--mode",
         mode,
@@ -1384,8 +1459,12 @@ def skin_cleanup_glb(
         summary_json=summary_json,
         bpy_container=bpy_container,
     )
-    if not output_glb.exists():
-        raise typer.BadParameter(f"Cleanup worker completed but did not create {output_glb}")
+    missing_outputs = [path for path in (output_glb, summary_json) if not path.exists()]
+    if missing_outputs:
+        raise typer.BadParameter(
+            "Cleanup worker completed but did not create required output(s): "
+            + ", ".join(str(path) for path in missing_outputs)
+        )
     typer.echo(f"Cleaned GLB: {output_glb}")
     typer.echo(f"Summary JSON: {summary_json}")
 
@@ -1901,6 +1980,79 @@ def config_init(
     typer.echo(f"Wrote {out}")
 
 
+def _worker_output_candidates(
+    *,
+    input_dir: Path,
+    subfolder: str,
+    filename: str,
+) -> tuple[Path, Path]:
+    output_root = input_dir.parent / "output"
+    return (
+        output_root / "comfyui" / subfolder / filename,
+        output_root / subfolder / filename,
+    )
+
+
+def _clear_worker_output_candidates(
+    *,
+    input_dir: Path,
+    subfolder: str,
+    filenames: tuple[str, ...],
+) -> None:
+    """Remove stale worker intermediates before launching a new invocation."""
+    for filename in filenames:
+        for candidate in _worker_output_candidates(
+            input_dir=input_dir,
+            subfolder=subfolder,
+            filename=filename,
+        ):
+            try:
+                candidate.unlink(missing_ok=True)
+            except PermissionError:
+                # Docker-created files may be root-owned; the active command
+                # also clears them through docker exec before worker launch.
+                continue
+
+
+def _recover_worker_output(
+    *,
+    input_dir: Path,
+    subfolder: str,
+    filename: str,
+    destination: Path,
+) -> Path | None:
+    """Copy a worker artifact from either supported Comfy host-mount layout."""
+    import shutil
+
+    candidates = [
+        candidate
+        for candidate in _worker_output_candidates(
+            input_dir=input_dir,
+            subfolder=subfolder,
+            filename=filename,
+        )
+        if candidate.exists()
+    ]
+    if not candidates:
+        return None
+    destination_resolved = destination.resolve()
+    if destination.exists():
+        matching_destination = [
+            candidate
+            for candidate in candidates
+            if candidate.resolve() == destination_resolved
+        ]
+        if not matching_destination:
+            return None
+        candidate = max(matching_destination, key=lambda path: path.stat().st_mtime_ns)
+    else:
+        candidate = max(candidates, key=lambda path: path.stat().st_mtime_ns)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if candidate.resolve() != destination_resolved:
+        shutil.copy2(candidate, destination)
+    return candidate
+
+
 @app.command("skin-cleanup-glb")
 def skin_cleanup_glb(
     input_glb: Path = typer.Option(..., "--input-glb", "--mesh", help="Rigged or animated GLB to clean."),
@@ -1943,21 +2095,51 @@ def skin_cleanup_glb(
     if helper_file.exists():
         shutil.copy2(helper_file, staged_helper)
 
-    output_base = output_name or f"{input_glb.stem}_headfix"
-    if output_base.lower().endswith(".glb"):
-        output_base = output_base[:-4]
+    try:
+        output_base = _cleanup_output_base_name(
+            output_name,
+            default=f"{input_glb.stem}_headfix",
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
     output_host = out_dir / f"{output_base}.glb"
     summary_host = out_dir / f"{output_base}.skin_cleanup.json"
-
+    existing_outputs = [path for path in (output_host, summary_host) if path.exists()]
+    if existing_outputs:
+        raise typer.BadParameter(
+            "Refusing to overwrite existing cleanup output(s): "
+            + ", ".join(str(path) for path in existing_outputs)
+        )
     staged_worker_container = f"/app/comfy/input/scripts/{staged_worker.name}"
     worker_container = "/app/comfy/custom_nodes/ComfyUI-UniRig/nodes/anatomical_cleanup_worker.py"
     input_container = f"/app/comfy/input/skin_cleanup/{staged_glb.name}"
-    output_container = f"/app/comfy/output/../input/skin_cleanup_unused"
     # remesher-comfy3d maps host workspace/output/comfyui to /app/comfy/output.
     # If the requested out_dir is /workspace/output/rigged, it is not directly mounted.
     # Write via /app/comfy/output/skin_cleanup, then copy back through the Jupyter-visible host path.
     output_container = f"/app/comfy/output/skin_cleanup/{output_host.name}"
     summary_container = f"/app/comfy/output/skin_cleanup/{summary_host.name}"
+
+    container_stale_outputs = [
+        output_container,
+        summary_container,
+        f"/app/comfy/output/comfyui/skin_cleanup/{output_host.name}",
+        f"/app/comfy/output/comfyui/skin_cleanup/{summary_host.name}",
+    ]
+    clear = subprocess.run(
+        ["docker", "exec", container, "rm", "-f", "--", *container_stale_outputs],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if clear.returncode != 0:
+        if clear.stderr:
+            typer.echo(clear.stderr.rstrip(), err=True)
+        raise typer.Exit(clear.returncode)
+    _clear_worker_output_candidates(
+        input_dir=input_dir,
+        subfolder="skin_cleanup",
+        filenames=(output_host.name, summary_host.name),
+    )
 
     staged_helper_container = f"/app/comfy/input/scripts/{staged_helper.name}"
     helper_container = "/app/comfy/custom_nodes/ComfyUI-UniRig/nodes/anatomical_skinning.py"
@@ -1990,16 +2172,23 @@ def skin_cleanup_glb(
             typer.echo(process.stderr.rstrip(), err=True)
         raise typer.Exit(process.returncode)
 
-    # Copy worker output from the Comfy output mount back to requested out_dir if needed.
-    comfy_host_output = Path("workspace/output/comfyui/skin_cleanup")
-    produced_glb = comfy_host_output / output_host.name
-    produced_summary = comfy_host_output / summary_host.name
-    if produced_glb.exists():
-        shutil.copy2(produced_glb, output_host)
-    if produced_summary.exists():
-        shutil.copy2(produced_summary, summary_host)
-    if not output_host.exists():
+    # Copy worker outputs from either the notebook or direct Docker host layout.
+    recovered_glb = _recover_worker_output(
+        input_dir=input_dir,
+        subfolder="skin_cleanup",
+        filename=output_host.name,
+        destination=output_host,
+    )
+    recovered_summary = _recover_worker_output(
+        input_dir=input_dir,
+        subfolder="skin_cleanup",
+        filename=summary_host.name,
+        destination=summary_host,
+    )
+    if recovered_glb is None or not output_host.exists():
         raise typer.BadParameter(f"Skin cleanup completed but output was not found: {output_host}")
+    if recovered_summary is None or not summary_host.exists():
+        raise typer.BadParameter(f"Skin cleanup completed but summary was not found: {summary_host}")
     typer.echo(f"Cleaned GLB: {output_host}")
     typer.echo(f"Cleanup summary: {summary_host}")
 

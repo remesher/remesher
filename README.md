@@ -71,6 +71,27 @@ uv run comfy-prompt-cli image-text-to-image \
   --prompt "Put this character in a futuristic city at sunset"
 ```
 
+### T-pose safe framing
+
+For strict T-pose characters, keep every fingertip visible with roughly 15–20% empty margin beyond each hand. Create a deterministic 65% centered resize on a white square canvas:
+
+```bash
+uv run comfy-prompt-cli pad-tpose-image \
+  --image path/to/tpose.png \
+  --subject-scale 0.65 \
+  --output downloads/tpose_padded.png
+```
+
+Or apply the same preprocessing directly before `image-to-glb`:
+
+```bash
+uv run comfy-prompt-cli image-to-glb \
+  --image path/to/tpose.png \
+  --subject-scale 0.65
+```
+
+`image-to-glb` defaults to `--subject-scale 1.0`, preserving existing behavior unless padding is requested.
+
 ### 4) Image to GLB (img_to_trellis2)
 
 ```bash
