@@ -757,9 +757,7 @@ def wait_prompt(
             verbose=verbose,
         )
     )
-    typer.echo("Prompt completed.")
-    typer.echo(json.dumps({"prompt_id": prompt_id, "queue": queue_state}, indent=2))
-
+    downloaded: list[Path] = []
     if download_glb:
         downloaded = _require_downloaded_artifacts(
             prompt_id=prompt_id,
@@ -767,8 +765,11 @@ def wait_prompt(
             extensions=GLB_EXTENSIONS,
             missing_hint="rerun with --no-download-glb to wait without downloading",
         )
-        for path in downloaded:
-            typer.echo(f"Downloaded {path}")
+
+    typer.echo("Prompt completed.")
+    typer.echo(json.dumps({"prompt_id": prompt_id, "queue": queue_state}, indent=2))
+    for path in downloaded:
+        typer.echo(f"Downloaded {path}")
 
 
 @app.command("run")

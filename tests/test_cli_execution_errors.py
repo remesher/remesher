@@ -85,6 +85,37 @@ def test_wait_command_rejects_missing_requested_glb(tmp_path, monkeypatch):
     assert "prompt-789" in result.output
     assert ".glb" in result.output
     assert "--no-download-glb" in result.output
+    assert "Prompt completed." not in result.output
+
+
+def test_wait_without_download_reports_completion(tmp_path, monkeypatch):
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"server_url": "http://127.0.0.1:8188/"}))
+
+    async def fake_wait_for_completion(*args, **kwargs):
+        return {"queue_running": [], "queue_pending": []}, {"outputs": {}}
+
+    monkeypatch.setattr(cli, "_wait_for_completion", fake_wait_for_completion)
+
+    def unexpected_download(*args, **kwargs):
+        raise AssertionError("download should be disabled")
+
+    monkeypatch.setattr(cli, "_download_from_history", unexpected_download)
+
+    result = CliRunner().invoke(
+        cli.app,
+        [
+            "wait",
+            "prompt-no-download",
+            "--config",
+            str(config),
+            "--no-download-glb",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Prompt completed." in result.output
+    assert "prompt-no-download" in result.output
 
 
 def test_missing_artifact_is_not_reported_as_completed(tmp_path, monkeypatch, capsys):
