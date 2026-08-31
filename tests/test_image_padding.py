@@ -129,8 +129,8 @@ def test_pad_image_accepts_rgba_background_color(tmp_path):
         background="#11223380",
     )
 
-    with Image.open(output).convert("RGB") as padded:
-        assert padded.getpixel((0, 0)) == (17, 34, 51)
+    with Image.open(output).convert("RGBA") as padded:
+        assert padded.getpixel((0, 0)) == (17, 34, 51, 128)
 
 
 def test_pad_image_applies_exif_orientation_before_resizing(tmp_path):

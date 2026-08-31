@@ -26,7 +26,10 @@ def pad_image_on_canvas(
         raise FileNotFoundError(source)
 
     max_subject_size = max(1, round(canvas_size * subject_scale))
-    background_rgba = ImageColor.getcolor(background, "RGBA")
+    parsed_background = ImageColor.getcolor(background, "RGBA")
+    if not isinstance(parsed_background, tuple) or len(parsed_background) != 4:
+        raise ValueError(f"background did not resolve to RGBA: {background}")
+    background_rgba = parsed_background
 
     with Image.open(source) as opened:
         image = ImageOps.exif_transpose(opened).convert("RGBA")
@@ -44,5 +47,6 @@ def pad_image_on_canvas(
         canvas.alpha_composite(resized, offset)
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    canvas.convert("RGB").save(destination, format="PNG", optimize=True)
+    output = canvas if background_rgba[3] < 255 else canvas.convert("RGB")
+    output.save(destination, format="PNG", optimize=True)
     return destination
