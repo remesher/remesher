@@ -275,3 +275,35 @@ def test_cleanup_output_base_rejects_non_basename(output_name):
 
 def test_cleanup_output_base_strips_glb_suffix():
     assert _cleanup_output_base_name("robot.glb", default="fallback") == "robot"
+
+
+def test_skin_cleanup_local_requires_summary_json(tmp_path, monkeypatch):
+    input_glb = tmp_path / "input.glb"
+    input_glb.write_text("input")
+    worker_file = tmp_path / "worker.py"
+    worker_file.write_text("# worker")
+    out_dir = tmp_path / "requested"
+
+    def write_only_glb(**kwargs):
+        kwargs["positional_outputs"][0].write_text("cleaned")
+
+    monkeypatch.setattr(cli, "_run_bpy_worker", write_only_glb)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "skin-cleanup-glb-local",
+            "--input-glb",
+            str(input_glb),
+            "--output-name",
+            "robot",
+            "--out-dir",
+            str(out_dir),
+            "--worker-file",
+            str(worker_file),
+        ],
+    )
+
+    assert (out_dir / "robot.glb").exists()
+    assert not (out_dir / "robot.skin_cleanup.json").exists()
+    assert result.exit_code != 0

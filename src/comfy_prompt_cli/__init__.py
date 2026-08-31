@@ -1459,8 +1459,12 @@ def skin_cleanup_glb_local(
         summary_json=summary_json,
         bpy_container=bpy_container,
     )
-    if not output_glb.exists():
-        raise typer.BadParameter(f"Cleanup worker completed but did not create {output_glb}")
+    missing_outputs = [path for path in (output_glb, summary_json) if not path.exists()]
+    if missing_outputs:
+        raise typer.BadParameter(
+            "Cleanup worker completed but did not create required output(s): "
+            + ", ".join(str(path) for path in missing_outputs)
+        )
     typer.echo(f"Cleaned GLB: {output_glb}")
     typer.echo(f"Summary JSON: {summary_json}")
 
