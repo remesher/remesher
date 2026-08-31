@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.11"
 dependencies = [
     "httpx>=0.28.1",
+    "pillow>=11.0.0",
     "pydantic>=2.12.5",
     "typer[all]>=0.24.1",
     "websockets>=15.0.1",
