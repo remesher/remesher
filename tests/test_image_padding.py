@@ -45,6 +45,14 @@ def test_pad_image_rejects_invalid_subject_scale(tmp_path, subject_scale):
         )
 
 
+def test_pad_image_rejects_non_png_destination(tmp_path):
+    source = tmp_path / "source.png"
+    Image.new("RGB", (10, 10), "black").save(source)
+
+    with pytest.raises(ValueError, match=".png"):
+        pad_image_on_canvas(source, tmp_path / "padded.jpg")
+
+
 def test_pad_tpose_image_command_writes_requested_output(tmp_path):
     source = tmp_path / "source.png"
     output = tmp_path / "padded.png"
@@ -92,6 +100,20 @@ def test_pad_tpose_image_command_defaults_to_point_65_scale(tmp_path):
     with Image.open(output).convert("RGB") as padded:
         difference = ImageChops.difference(padded, Image.new("RGB", padded.size, "white"))
         assert difference.getbbox() == (17, 24, 82, 76)
+
+
+def test_pad_tpose_image_command_reports_decode_error(tmp_path):
+    source = tmp_path / "invalid.png"
+    source.write_text("not an image")
+
+    result = CliRunner().invoke(
+        app,
+        ["pad-tpose-image", "--image", str(source)],
+    )
+
+    assert result.exit_code != 0
+    assert "Could not pad image" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_pad_image_accepts_rgba_background_color(tmp_path):
@@ -213,3 +235,31 @@ def test_image_to_glb_default_uploads_original_image(tmp_path, monkeypatch):
     assert result.exit_code == 0
     assert uploaded["path"] == source
     assert "Padded input image" not in result.output
+
+
+def test_image_to_glb_padding_reports_decode_error(tmp_path, monkeypatch):
+    source = tmp_path / "invalid.png"
+    source.write_text("not an image")
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"server_url": "http://127.0.0.1:8188/"}))
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "image-to-glb",
+            "--image",
+            str(source),
+            "--workflow-file",
+            str(Path(__file__).resolve().parents[1] / "examples" / "img_to_trellis2.json"),
+            "--config",
+            str(config),
+            "--subject-scale",
+            "0.65",
+            "--out-dir",
+            str(tmp_path / "downloads"),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Could not pad image" in result.output
+    assert "Traceback" not in result.output

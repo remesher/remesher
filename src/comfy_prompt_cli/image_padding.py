@@ -20,6 +20,8 @@ def pad_image_on_canvas(
         raise ValueError("subject_scale must be greater than 0 and at most 1")
     if canvas_size <= 0:
         raise ValueError("canvas_size must be greater than 0")
+    if destination.suffix.lower() != ".png":
+        raise ValueError("destination must use a .png suffix")
     if not source.exists() or not source.is_file():
         raise FileNotFoundError(source)
 

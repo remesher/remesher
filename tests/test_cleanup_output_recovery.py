@@ -168,3 +168,40 @@ def test_skin_cleanup_commands_have_distinct_help_surfaces():
     assert "--input-dir" in container_result.output
     assert local_result.exit_code == 0
     assert "--bpy-container" in local_result.output
+
+
+def test_skin_cleanup_local_rejects_existing_output_before_worker(tmp_path, monkeypatch):
+    source = tmp_path / "source.glb"
+    source.write_bytes(b"source")
+    worker = tmp_path / "worker.py"
+    worker.write_text("# worker")
+    out_dir = tmp_path / "requested"
+    out_dir.mkdir()
+    (out_dir / "robot.glb").write_bytes(b"existing")
+    worker_called = False
+
+    def unexpected_worker(**kwargs):
+        nonlocal worker_called
+        worker_called = True
+        raise AssertionError("worker must not run")
+
+    monkeypatch.setattr(cli, "_run_bpy_worker", unexpected_worker)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "skin-cleanup-glb-local",
+            "--input-glb",
+            str(source),
+            "--output-name",
+            "robot",
+            "--worker-file",
+            str(worker),
+            "--out-dir",
+            str(out_dir),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Refusing to overwrite" in result.output
+    assert worker_called is False

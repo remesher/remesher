@@ -997,8 +997,8 @@ def pad_tpose_image(
             canvas_size=canvas_size,
             background=background,
         )
-    except ValueError as exc:
-        raise typer.BadParameter(str(exc)) from exc
+    except (ValueError, OSError) as exc:
+        raise typer.BadParameter(f"Could not pad image: {exc}") from exc
     typer.echo(f"Padded T-pose image: {padded}")
 
 
@@ -1045,8 +1045,8 @@ def image_to_glb(
                 canvas_size=padding_canvas_size,
                 background=padding_background,
             )
-        except ValueError as exc:
-            raise typer.BadParameter(str(exc)) from exc
+        except (ValueError, OSError) as exc:
+            raise typer.BadParameter(f"Could not pad image: {exc}") from exc
         typer.echo(f"Padded input image: {upload_image}")
 
     prompt = _load_prompt_from_file(workflow_file)
@@ -1402,6 +1402,12 @@ def skin_cleanup_glb_local(
     out_dir.mkdir(parents=True, exist_ok=True)
     output_glb = out_dir / f"{output_name}.glb"
     summary_json = out_dir / f"{output_name}.skin_cleanup.json"
+    existing_outputs = [path for path in (output_glb, summary_json) if path.exists()]
+    if existing_outputs:
+        raise typer.BadParameter(
+            "Refusing to overwrite existing cleanup output(s): "
+            + ", ".join(str(path) for path in existing_outputs)
+        )
     extra_args = [
         "--mode",
         mode,
