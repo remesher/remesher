@@ -674,12 +674,14 @@ def _require_downloaded_artifacts(
     prompt_id: str,
     downloaded: list[Path],
     extensions: set[str],
+    missing_hint: str | None = None,
 ) -> list[Path]:
     if downloaded:
         return downloaded
     expected = ", ".join(sorted(extensions)) or "requested"
+    hint = f"; {missing_hint}" if missing_hint else ""
     raise typer.BadParameter(
-        f"ComfyUI prompt {prompt_id} produced no expected artifact ({expected})"
+        f"ComfyUI prompt {prompt_id} produced no expected artifact ({expected}){hint}"
     )
 
 
@@ -762,6 +764,7 @@ def wait_prompt(
             prompt_id=prompt_id,
             downloaded=_download_from_history(base, prompt_id, history_item, out_dir),
             extensions=GLB_EXTENSIONS,
+            missing_hint="rerun with --no-download-glb to wait without downloading",
         )
         for path in downloaded:
             typer.echo(f"Downloaded {path}")

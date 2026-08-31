@@ -83,3 +83,4 @@ def test_wait_command_rejects_missing_requested_glb(tmp_path, monkeypatch):
     assert result.exit_code != 0
     assert "prompt-789" in result.output
     assert ".glb" in result.output
+    assert "--no-download-glb" in result.output
