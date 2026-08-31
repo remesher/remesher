@@ -111,6 +111,25 @@ def test_pad_image_accepts_rgba_background_color(tmp_path):
         assert padded.getpixel((0, 0)) == (17, 34, 51)
 
 
+def test_pad_image_applies_exif_orientation_before_resizing(tmp_path):
+    source = tmp_path / "rotated.jpg"
+    output = tmp_path / "padded.png"
+    exif = Image.Exif()
+    exif[274] = 6
+    Image.new("RGB", (40, 20), "black").save(source, exif=exif)
+
+    pad_image_on_canvas(
+        source,
+        output,
+        subject_scale=0.6,
+        canvas_size=100,
+    )
+
+    with Image.open(output).convert("RGB") as padded:
+        difference = ImageChops.difference(padded, Image.new("RGB", padded.size, "white"))
+        assert difference.getbbox() == (35, 20, 65, 80)
+
+
 def test_image_to_glb_subject_scale_uploads_padded_image(tmp_path, monkeypatch):
     source = tmp_path / "source.png"
     Image.new("RGB", (100, 80), "black").save(source)

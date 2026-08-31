@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PIL import Image, ImageColor
+from PIL import Image, ImageColor, ImageOps
 
 
 def pad_image_on_canvas(
@@ -27,7 +27,7 @@ def pad_image_on_canvas(
     background_rgba = ImageColor.getcolor(background, "RGBA")
 
     with Image.open(source) as opened:
-        image = opened.convert("RGBA")
+        image = ImageOps.exif_transpose(opened).convert("RGBA")
         ratio = min(max_subject_size / image.width, max_subject_size / image.height)
         resized_size = (
             max(1, round(image.width * ratio)),
