@@ -8,6 +8,7 @@ import comfy_prompt_cli as cli
 from comfy_prompt_cli import (
     _raise_for_history_error,
     _require_downloaded_artifacts,
+    _submit_wait_and_download,
 )
 
 
@@ -84,3 +85,34 @@ def test_wait_command_rejects_missing_requested_glb(tmp_path, monkeypatch):
     assert "prompt-789" in result.output
     assert ".glb" in result.output
     assert "--no-download-glb" in result.output
+
+
+def test_missing_artifact_is_not_reported_as_completed(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(
+        cli,
+        "_submit_prompt",
+        lambda *args, **kwargs: {"prompt_id": "prompt-missing"},
+    )
+
+    async def fake_wait_for_completion(*args, **kwargs):
+        return {"queue_running": [], "queue_pending": []}, {"outputs": {}}
+
+    monkeypatch.setattr(cli, "_wait_for_completion", fake_wait_for_completion)
+    monkeypatch.setattr(
+        cli,
+        "_download_from_history_by_ext",
+        lambda *args, **kwargs: [],
+    )
+
+    with pytest.raises(typer.BadParameter):
+        _submit_wait_and_download(
+            base="http://127.0.0.1:8188",
+            prompt={},
+            client_id=None,
+            poll_interval=0.5,
+            timeout=1.0,
+            out_dir=tmp_path,
+            extensions={".glb"},
+        )
+
+    assert "Prompt completed." not in capsys.readouterr().out

@@ -713,15 +713,16 @@ def _submit_wait_and_download(
             verbose=verbose,
         )
     )
-    typer.echo("Prompt completed.")
-    typer.echo(json.dumps({"prompt_id": prompt_id, "queue": queue_state}, indent=2))
-    return _require_downloaded_artifacts(
+    downloaded = _require_downloaded_artifacts(
         prompt_id=prompt_id,
         downloaded=_download_from_history_by_ext(
             base, prompt_id, history_item, out_dir, extensions
         ),
         extensions=extensions,
     )
+    typer.echo("Prompt completed.")
+    typer.echo(json.dumps({"prompt_id": prompt_id, "queue": queue_state}, indent=2))
+    return downloaded
 
 
 @app.command("wait")
@@ -821,9 +822,6 @@ def run_prompt(
         extensions=GLB_EXTENSIONS,
         verbose=verbose,
     )
-    if not downloaded:
-        typer.echo("No GLB reference found in history outputs.")
-        return
     for path in downloaded:
         typer.echo(f"Downloaded {path}")
 
@@ -895,9 +893,6 @@ def text_to_image(
         extensions=IMAGE_EXTENSIONS,
         verbose=verbose,
     )
-    if not downloaded:
-        typer.echo("No image output reference found in history outputs.")
-        return
     for path in downloaded:
         typer.echo(f"Downloaded {path}")
 
@@ -977,9 +972,6 @@ def image_text_to_image(
         extensions=IMAGE_EXTENSIONS,
         verbose=verbose,
     )
-    if not downloaded:
-        typer.echo("No image output reference found in history outputs.")
-        return
     for path in downloaded:
         typer.echo(f"Downloaded {path}")
 
@@ -1043,9 +1035,6 @@ def image_to_glb(
         extensions=GLB_EXTENSIONS,
         verbose=verbose,
     )
-    if not downloaded:
-        typer.echo("No GLB reference found in history outputs.")
-        return
     for path in downloaded:
         typer.echo(f"Downloaded {path}")
 
@@ -1227,9 +1216,6 @@ def rig_glb(
         extensions=GLB_EXTENSIONS,
         verbose=verbose,
     )
-    if not downloaded:
-        typer.echo("No GLB reference found in history outputs.")
-        return
     for path in downloaded:
         typer.echo(f"Downloaded {path}")
 
