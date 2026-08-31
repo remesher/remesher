@@ -23,7 +23,8 @@ def test_pad_image_centers_scaled_source_on_white_square_canvas(tmp_path):
     )
 
     assert result == output
-    with Image.open(output).convert("RGB") as padded:
+    with Image.open(output) as opened:
+        padded = opened.convert("RGB")
         assert padded.size == (100, 100)
         difference = ImageChops.difference(padded, Image.new("RGB", padded.size, "white"))
         assert difference.getbbox() == (20, 26, 80, 74)
@@ -97,7 +98,8 @@ def test_pad_tpose_image_command_defaults_to_point_65_scale(tmp_path):
     )
 
     assert result.exit_code == 0
-    with Image.open(output).convert("RGB") as padded:
+    with Image.open(output) as opened:
+        padded = opened.convert("RGB")
         difference = ImageChops.difference(padded, Image.new("RGB", padded.size, "white"))
         assert difference.getbbox() == (17, 24, 82, 76)
 
@@ -129,7 +131,8 @@ def test_pad_image_accepts_rgba_background_color(tmp_path):
         background="#11223380",
     )
 
-    with Image.open(output).convert("RGBA") as padded:
+    with Image.open(output) as opened:
+        padded = opened.convert("RGBA")
         assert padded.getpixel((0, 0)) == (17, 34, 51, 128)
 
 
@@ -147,7 +150,8 @@ def test_pad_image_applies_exif_orientation_before_resizing(tmp_path):
         canvas_size=100,
     )
 
-    with Image.open(output).convert("RGB") as padded:
+    with Image.open(output) as opened:
+        padded = opened.convert("RGB")
         difference = ImageChops.difference(padded, Image.new("RGB", padded.size, "white"))
         assert difference.getbbox() == (35, 20, 65, 80)
 
@@ -193,7 +197,8 @@ def test_image_to_glb_subject_scale_uploads_padded_image(tmp_path, monkeypatch):
     padded = uploaded["path"]
     assert padded != source
     assert padded.exists()
-    with Image.open(padded).convert("RGB") as image:
+    with Image.open(padded) as opened:
+        image = opened.convert("RGB")
         difference = ImageChops.difference(image, Image.new("RGB", image.size, "white"))
         assert difference.getbbox() == (20, 26, 80, 74)
     assert "Padded input image" in result.output
