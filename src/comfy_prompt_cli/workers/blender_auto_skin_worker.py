@@ -48,6 +48,20 @@ def _matrix_max_abs_delta(first, second) -> float:
     )
 
 
+def _validate_exact_asset_names(
+    label: str, expected: list[str], actual: list[str]
+) -> None:
+    if actual != expected:
+        raise RuntimeError(
+            f"Automatic-weight GLB changed {label}: "
+            f"expected={expected}, actual={actual}"
+        )
+
+
+def _has_exact_armature_modifier(modifiers, armature) -> bool:
+    return len(modifiers) == 1 and modifiers[0].object == armature
+
+
 def _promote_file_noreplace(source: Path, destination: Path) -> None:
     """Atomically rename a file without replacing an existing destination."""
     if sys.platform.startswith("linux"):
@@ -181,6 +195,10 @@ def _removed_component_count(
     )
 
 
+def _removed_fraction(removed_count: int, vertex_count: int) -> float:
+    return removed_count / vertex_count if vertex_count else 0.0
+
+
 def _remove_small_disconnected_components(
     mesh,
     *,
@@ -216,7 +234,7 @@ def _remove_small_disconnected_components(
     remove = _small_component_vertices_to_remove(
         components, max_component_vertices
     )
-    removed_fraction = len(remove) / vertex_count if vertex_count else 1.0
+    removed_fraction = _removed_fraction(len(remove), vertex_count)
     if removed_fraction > max_removed_fraction:
         raise RuntimeError(
             "Disconnected-island cleanup would remove too much geometry: "
@@ -252,9 +270,9 @@ def _export_validate_and_promote(
     mesh,
     armature,
     *,
-    expected_material_count: int,
-    expected_image_count: int,
-    expected_uv_layer_count: int,
+    expected_materials: list[str],
+    expected_images: list[str],
+    expected_uv_layers: list[str],
     expected_bone_count: int,
 ) -> tuple[list[str], int, dict]:
     """Export to a unique candidate, validate it, then atomically promote it."""
@@ -301,8 +319,8 @@ def _export_validate_and_promote(
             for modifier in reimport_mesh.modifiers
             if modifier.type == "ARMATURE"
         ]
-        if not reimport_modifiers or not any(
-            modifier.object == reimport_armature for modifier in reimport_modifiers
+        if not _has_exact_armature_modifier(
+            reimport_modifiers, reimport_armature
         ):
             raise RuntimeError(
                 "Automatic-weight GLB reimport armature modifier does not target "
@@ -313,12 +331,20 @@ def _export_validate_and_promote(
                 "Automatic-weight GLB reimport changed bone count: "
                 f"{len(reimport_armature.data.bones)} != {expected_bone_count}"
             )
-        if len(reimport_mesh.data.materials) < expected_material_count:
-            raise RuntimeError("Automatic-weight GLB reimport lost materials")
-        if len(bpy.data.images) < expected_image_count:
-            raise RuntimeError("Automatic-weight GLB reimport lost embedded images")
-        if len(reimport_mesh.data.uv_layers) < expected_uv_layer_count:
-            raise RuntimeError("Automatic-weight GLB reimport lost UV layers")
+        reimport_materials = [
+            material.name for material in reimport_mesh.data.materials
+        ]
+        reimport_images = [image.name for image in bpy.data.images]
+        reimport_uv_layers = [
+            layer.name for layer in reimport_mesh.data.uv_layers
+        ]
+        _validate_exact_asset_names(
+            "materials", expected_materials, reimport_materials
+        )
+        _validate_exact_asset_names("images", expected_images, reimport_images)
+        _validate_exact_asset_names(
+            "UV layers", expected_uv_layers, reimport_uv_layers
+        )
         reimport_weighted_vertices = _count_positive_deform_weights(
             reimport_mesh, reimport_armature
         )
@@ -332,11 +358,9 @@ def _export_validate_and_promote(
             "armatures": [obj.name for obj in reimport_armatures],
             "bones": len(reimport_armature.data.bones),
             "meshes": [obj.name for obj in reimport_meshes],
-            "materials": [
-                material.name for material in reimport_mesh.data.materials
-            ],
-            "images": [image.name for image in bpy.data.images],
-            "uv_layers": [layer.name for layer in reimport_mesh.data.uv_layers],
+            "materials": reimport_materials,
+            "images": reimport_images,
+            "uv_layers": reimport_uv_layers,
             "armature_modifiers": [
                 modifier.name for modifier in reimport_modifiers
             ],
@@ -428,12 +452,15 @@ def auto_skin_glb(
     normalized_materials = [material.name for material in mesh.data.materials]
     normalized_images = [image.name for image in bpy.data.images]
     normalized_uv_layers = [layer.name for layer in mesh.data.uv_layers]
-    if len(normalized_materials) < len(source_materials):
-        raise RuntimeError("Normalized MIA GLB lost materials")
-    if len(normalized_images) < len(source_images):
-        raise RuntimeError("Normalized MIA GLB lost embedded images")
-    if len(normalized_uv_layers) < len(source_uv_layers):
-        raise RuntimeError("Normalized MIA GLB lost UV layers")
+    _validate_exact_asset_names(
+        "materials during normalization", source_materials, normalized_materials
+    )
+    _validate_exact_asset_names(
+        "images during normalization", source_images, normalized_images
+    )
+    _validate_exact_asset_names(
+        "UV layers during normalization", source_uv_layers, normalized_uv_layers
+    )
     if len(armature.data.bones) != source_bone_count:
         raise RuntimeError(
             "Normalized MIA GLB changed bone count: "
@@ -516,7 +543,7 @@ def auto_skin_glb(
     armature_modifiers = [
         modifier for modifier in mesh.modifiers if modifier.type == "ARMATURE"
     ]
-    if not armature_modifiers or armature_modifiers[0].object != armature:
+    if not _has_exact_armature_modifier(armature_modifiers, armature):
         raise RuntimeError("Automatic weighting did not create a valid armature modifier")
 
     armature_name = armature.name
@@ -526,9 +553,9 @@ def auto_skin_glb(
         output_glb,
         mesh,
         armature,
-        expected_material_count=len(source_materials),
-        expected_image_count=len(source_images),
-        expected_uv_layer_count=len(source_uv_layers),
+        expected_materials=source_materials,
+        expected_images=source_images,
+        expected_uv_layers=source_uv_layers,
         expected_bone_count=source_bone_count,
     )
 

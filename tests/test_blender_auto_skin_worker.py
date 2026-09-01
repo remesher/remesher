@@ -7,12 +7,15 @@ import pytest
 from comfy_prompt_cli.workers import blender_auto_skin_worker as worker
 from comfy_prompt_cli.workers.blender_auto_skin_worker import (
     _count_positive_deform_weights,
+    _has_exact_armature_modifier,
     _matrix_max_abs_delta,
     _new_temp_glb_path,
     _promote_file_noreplace,
+    _removed_fraction,
     _removed_component_count,
     _remove_temp_glb_path,
     _small_component_vertices_to_remove,
+    _validate_exact_asset_names,
     _validate_weld_distance,
     _write_json_noreplace,
 )
@@ -151,6 +154,28 @@ def test_small_component_cleanup_never_selects_the_sole_or_largest_component():
     assert _removed_component_count(sole, sole_removed) == 0
     assert multiple_removed == [3, 4, 5]
     assert _removed_component_count(multiple, multiple_removed) == 2
+    assert _removed_fraction(0, 0) == 0.0
+
+
+def test_exact_asset_contract_rejects_loss_or_duplication():
+    _validate_exact_asset_names("images", ["A", "B"], ["A", "B"])
+    with pytest.raises(RuntimeError, match="changed images"):
+        _validate_exact_asset_names("images", ["A", "B"], ["B", "A"])
+    with pytest.raises(RuntimeError, match="changed images"):
+        _validate_exact_asset_names("images", ["A", "B"], ["A"])
+    with pytest.raises(RuntimeError, match="changed images"):
+        _validate_exact_asset_names("images", ["A", "B"], ["A", "B", "B"])
+
+
+def test_armature_modifier_contract_requires_one_exact_target():
+    armature = object()
+    exact = SimpleNamespace(object=armature)
+    wrong = SimpleNamespace(object=object())
+
+    assert _has_exact_armature_modifier([exact], armature)
+    assert not _has_exact_armature_modifier([], armature)
+    assert not _has_exact_armature_modifier([wrong], armature)
+    assert not _has_exact_armature_modifier([exact, exact], armature)
 
 
 def test_failure_still_emits_diagnostics_when_summary_already_exists(
