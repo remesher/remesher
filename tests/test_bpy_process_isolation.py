@@ -7,5 +7,6 @@ def test_docker_bpy_exec_clears_inherited_open3d_preload():
         "exec",
         "-e",
         "LD_PRELOAD=",
+        "--",
         "comfy3d-arm64",
     ]
