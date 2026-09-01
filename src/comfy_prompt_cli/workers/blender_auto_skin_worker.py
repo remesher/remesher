@@ -606,7 +606,21 @@ def main() -> int:
             )
         print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
         return 1
-    _write_json_noreplace(Path(args.summary_json), result)
+    try:
+        _write_json_noreplace(Path(args.summary_json), result)
+    except OSError as summary_exc:
+        publication_error = {
+            "error": "Automatic skinning succeeded but summary publication failed",
+            "summary_write_error": (
+                f"{type(summary_exc).__name__}: {summary_exc}"
+            ),
+            "worker_result": result,
+        }
+        print(
+            json.dumps(publication_error, indent=2, sort_keys=True),
+            file=sys.stderr,
+        )
+        return 1
     print(json.dumps(result, indent=2, sort_keys=True))
     return 0
 

@@ -174,3 +174,26 @@ def test_failure_still_emits_diagnostics_when_summary_already_exists(
     assert "original weighting failure" in captured.err
     assert "summary_write_error" in captured.err
     assert summary.read_text() == '{"owner": "peer"}'
+
+
+def test_success_reports_controlled_error_when_summary_already_exists(
+    tmp_path, monkeypatch, capsys
+):
+    summary = tmp_path / "summary.json"
+    summary.write_text('{"owner": "peer"}')
+    monkeypatch.setattr(
+        worker.sys,
+        "argv",
+        ["worker", "input.glb", "output.glb", "--summary-json", str(summary)],
+    )
+    monkeypatch.setattr(
+        worker,
+        "auto_skin_glb",
+        lambda *args, **kwargs: {"weighted_vertices": 10},
+    )
+
+    assert worker.main() == 1
+    captured = capsys.readouterr()
+    assert "summary_write_error" in captured.err
+    assert '"worker_result"' in captured.err
+    assert summary.read_text() == '{"owner": "peer"}'
