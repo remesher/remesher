@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import errno
+import hashlib
 import json
 import math
 import os
@@ -110,6 +111,14 @@ def _write_json_noreplace(path: Path, value: dict) -> None:
     """Create structured output exclusively; never truncate an existing file."""
     with path.open("x", encoding="utf-8") as handle:
         json.dump(value, handle, indent=2, sort_keys=True)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _deform_group_indices(mesh, armature) -> set[int]:
@@ -577,6 +586,7 @@ def auto_skin_glb(
         "island_cleanup": island_cleanup,
         "export_result": export_result,
         "output_size": output_size,
+        "output_sha256": _sha256_file(output_glb),
         "armature": armature_name,
         "bones": source_bone_count,
         "mesh": mesh_name,

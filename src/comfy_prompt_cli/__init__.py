@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import ctypes
 import errno
+import hashlib
 import importlib
 import json
 import math
@@ -1531,35 +1532,23 @@ def _publish_file_pair_noreplace(
     candidate_summary: Path,
     summary_json: Path,
 ) -> None:
-    """Publish summary and GLB without replacement or a stale summary on race."""
-    private_summary_alias = candidate_summary.with_name(
-        f".{candidate_summary.name}.publication-inode"
-    )
-    os.link(candidate_summary, private_summary_alias)
-    try:
-        _move_file_noreplace(candidate_summary, summary_json)
-        try:
-            _move_file_noreplace(candidate_output, output_glb)
-        except Exception as exc:
-            try:
-                worker_summary = json.loads(
-                    private_summary_alias.read_text(encoding="utf-8")
-                )
-            except (json.JSONDecodeError, OSError):
-                worker_summary = None
-            publication_failure = {
-                "error": f"{type(exc).__name__}: {exc}",
-                "publication_failed": True,
-                "final_glb_published": False,
-                "worker_summary": worker_summary,
-            }
-            private_summary_alias.write_text(
-                json.dumps(publication_failure, indent=2, sort_keys=True),
-                encoding="utf-8",
-            )
-            raise
-    finally:
-        private_summary_alias.unlink(missing_ok=True)
+    """Publish GLB first, then its hash-bound summary as the commit marker."""
+    summary = json.loads(candidate_summary.read_text(encoding="utf-8"))
+    expected_sha256 = summary.get("output_sha256")
+    if not isinstance(expected_sha256, str):
+        raise typer.BadParameter("Automatic-weight summary has no output_sha256")
+    digest = hashlib.sha256()
+    with candidate_output.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    actual_sha256 = digest.hexdigest()
+    if actual_sha256 != expected_sha256:
+        raise typer.BadParameter(
+            "Automatic-weight summary hash does not match candidate GLB: "
+            f"{expected_sha256} != {actual_sha256}"
+        )
+    _move_file_noreplace(candidate_output, output_glb)
+    _move_file_noreplace(candidate_summary, summary_json)
 
 
 def _postprocess_rig_downloads(

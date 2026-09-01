@@ -128,7 +128,10 @@ configured Comfy3D container.
 The expected downloaded filename remains the final auto-skinned GLB. Remesher
 also preserves the pre-postprocess MIA artifact as `*.mia_raw.glb` and writes an
 `*.autoskin.json` report with weld and weighted/unweighted vertex counts. The
-pipeline fails if Blender assigns no weights or leaves more than 0.5% of the
+final GLB is published first and the report is published last as the commit
+marker; `output_sha256` must match the final GLB before consumers treat the pair
+as complete. Neither public artifact is mutated after publication. The pipeline
+fails if Blender assigns no weights or leaves more than 0.5% of the
 welded vertices unweighted before the nearest-bone completion pass. Before bone
 heat, disconnected components of at most 128 vertices are deleted only when
 their combined size is no more than 0.5% of the welded mesh.

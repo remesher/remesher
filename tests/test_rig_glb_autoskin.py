@@ -1,4 +1,6 @@
 import inspect
+import hashlib
+import json
 import math
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +11,14 @@ from typer.testing import CliRunner
 
 import comfy_prompt_cli as cli
 from comfy_prompt_cli import _postprocess_rig_downloads, app
+
+
+def _write_hashed_summary(summary_path, output_path, **extra):
+    payload = {
+        "output_sha256": hashlib.sha256(output_path.read_bytes()).hexdigest(),
+        **extra,
+    }
+    summary_path.write_text(json.dumps(payload))
 
 
 def test_default_auto_skin_worker_is_inside_installed_package():
@@ -29,7 +39,11 @@ def test_rig_postprocess_preserves_raw_mia_and_replaces_expected_output(tmp_path
     def fake_run_bpy_worker(**kwargs):
         captured.update(kwargs)
         kwargs["positional_outputs"][0].write_bytes(b"auto-skinned")
-        kwargs["summary_json"].write_text('{"weighted_vertices": 100}')
+        _write_hashed_summary(
+            kwargs["summary_json"],
+            kwargs["positional_outputs"][0],
+            weighted_vertices=100,
+        )
 
     monkeypatch.setattr(cli, "_run_bpy_worker", fake_run_bpy_worker)
 
@@ -466,11 +480,12 @@ def test_postprocess_never_replaces_concurrently_created_final_glb(
 ):
     downloaded = tmp_path / "robot.glb"
     downloaded.write_bytes(b"raw")
-
     def racing_worker(**kwargs):
         downloaded.write_bytes(b"concurrent-final")
         kwargs["positional_outputs"][0].write_bytes(b"worker-final")
-        kwargs["summary_json"].write_text('{"ok": true}')
+        _write_hashed_summary(
+            kwargs["summary_json"], kwargs["positional_outputs"][0], ok=True
+        )
 
     monkeypatch.setattr(cli, "_run_bpy_worker", racing_worker)
 
@@ -485,9 +500,7 @@ def test_postprocess_never_replaces_concurrently_created_final_glb(
         )
 
     assert downloaded.read_bytes() == b"concurrent-final"
-    publication_report = (tmp_path / "robot.autoskin.json").read_text()
-    assert '"publication_failed": true' in publication_report
-    assert '"final_glb_published": false' in publication_report
+    assert not (tmp_path / "robot.autoskin.json").exists()
 
 
 def test_postprocess_never_replaces_concurrently_created_summary(
@@ -500,7 +513,11 @@ def test_postprocess_never_replaces_concurrently_created_summary(
     def racing_worker(**kwargs):
         public_summary.write_text('{"owner": "concurrent"}')
         kwargs["positional_outputs"][0].write_bytes(b"worker-final")
-        kwargs["summary_json"].write_text('{"owner": "worker"}')
+        _write_hashed_summary(
+            kwargs["summary_json"],
+            kwargs["positional_outputs"][0],
+            owner="worker",
+        )
 
     monkeypatch.setattr(cli, "_run_bpy_worker", racing_worker)
 
@@ -515,34 +532,20 @@ def test_postprocess_never_replaces_concurrently_created_summary(
         )
 
     assert public_summary.read_text() == '{"owner": "concurrent"}'
-    assert not downloaded.exists()
+    assert downloaded.read_bytes() == b"worker-final"
 
 
-def test_pair_failure_never_unlinks_summary_replaced_after_identity_link(
-    tmp_path, monkeypatch
-):
+def test_pair_rejects_mismatched_hash_before_publication(tmp_path):
     candidate_output = tmp_path / "candidate.glb"
     candidate_summary = tmp_path / "candidate.json"
     output_glb = tmp_path / "final.glb"
     summary_json = tmp_path / "final.json"
     candidate_output.write_bytes(b"candidate")
-    candidate_summary.write_text('{"owner": "worker"}')
-    real_move = cli._move_file_noreplace
-    calls = 0
+    candidate_summary.write_text(
+        json.dumps({"output_sha256": "0" * 64, "owner": "worker"})
+    )
 
-    def racing_move(source, destination):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            real_move(source, destination)
-            return
-        summary_json.unlink()
-        summary_json.write_text('{"owner": "peer"}')
-        raise FileExistsError(destination)
-
-    monkeypatch.setattr(cli, "_move_file_noreplace", racing_move)
-
-    with pytest.raises(FileExistsError):
+    with pytest.raises(typer.BadParameter, match="hash does not match"):
         cli._publish_file_pair_noreplace(
             candidate_output=candidate_output,
             output_glb=output_glb,
@@ -550,5 +553,5 @@ def test_pair_failure_never_unlinks_summary_replaced_after_identity_link(
             summary_json=summary_json,
         )
 
-    assert summary_json.read_text() == '{"owner": "peer"}'
+    assert not summary_json.exists()
     assert not output_glb.exists()
