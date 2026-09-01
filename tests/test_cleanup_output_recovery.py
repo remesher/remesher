@@ -253,9 +253,10 @@ def test_skin_cleanup_docker_clear_uses_end_of_options_marker(tmp_path, monkeypa
     )
 
     assert result.exit_code != 0
-    assert calls[0][:7] == [
+    assert calls[0][:8] == [
         "docker",
         "exec",
+        "--",
         "test-container",
         "rm",
         "-f",

@@ -111,6 +111,37 @@ uv run comfy-prompt-cli rig-glb \
   --glb-name rigged
 ```
 
+By default, `rig-glb` uses MIA to create the humanoid armature, then runs an
+isolated Blender post-stage that:
+
+1. merges coincident triangle vertices (`1e-6` by default),
+2. removes the MIA skin weights,
+3. applies Blender **Armature Deform → With Automatic Weights**,
+4. reimports and validates the resulting GLB.
+
+The canonical worker ships inside the `comfy_prompt_cli.workers` package, so
+notebook and installed-CLI users get the same first-party implementation without
+a source checkout or a worker-path override. It runs directly when local Python
+provides `bpy`; the CLI can otherwise execute that same packaged worker in the
+configured Comfy3D container.
+
+The expected downloaded filename remains the final auto-skinned GLB. Remesher
+also preserves the pre-postprocess MIA artifact as `*.mia_raw.glb` and writes an
+`*.autoskin.json` report with weld and weighted/unweighted vertex counts. The
+final GLB is published first and the report is published last as the commit
+marker; `output_sha256` must match the final GLB before consumers treat the pair
+as complete. Neither public artifact is mutated after publication. The pipeline
+fails if Blender assigns no weights or leaves more than 0.5% of the
+welded vertices unweighted before the nearest-bone completion pass. Before bone
+heat, disconnected components of at most 128 vertices are deleted only when
+their combined size is no more than 0.5% of the welded mesh.
+
+Use `--no-auto-skin` to keep the previous MIA-weight output unchanged. Advanced
+controls include `--auto-skin-weld-distance`, `--max-unweighted-fraction`,
+`--auto-skin-worker`, and `--bpy-container`. Atomic no-replace publication is
+supported on Linux (`renameat2`) and Windows; unsupported platforms fail cleanly
+with `ENOTSUP`, where `--no-auto-skin` remains available.
+
 ### 6) Text to GLB (end-to-end)
 
 ```bash
@@ -124,6 +155,9 @@ uv run comfy-prompt-cli text-to-glb \
 uv run comfy-prompt-cli text-to-rigged-glb \
   --prompt "A stylized wrestler character, full body, neutral pose"
 ```
+
+`text-to-rigged-glb` uses the same Blender automatic-weight post-stage by
+default and supports the same opt-out and tuning flags.
 
 ### 8) Submit prompt JSON
 

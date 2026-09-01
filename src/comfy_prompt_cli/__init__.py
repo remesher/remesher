@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
+import errno
+import hashlib
 import importlib
 import json
+import math
 import mimetypes
+import os
+import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Any
@@ -23,6 +31,9 @@ DEFAULT_TEXT_TO_IMAGE_WORKFLOW = Path("examples/qwen_image_2512.json")
 DEFAULT_IMAGE_TEXT_TO_IMAGE_WORKFLOW = Path("examples/qwen_image_edit_2511.json")
 DEFAULT_IMAGE_TO_GLB_WORKFLOW = Path("examples/img_to_trellis2.json")
 DEFAULT_RIG_GLB_WORKFLOW = Path("examples/rig_glb_mia.json")
+DEFAULT_AUTO_SKIN_WORKER = (
+    Path(__file__).resolve().parent / "workers" / "blender_auto_skin_worker.py"
+)
 DEFAULT_RETARGET_WORKER = Path("docker/demo-jupyter/scripts/arp_retarget_worker.py")
 DEFAULT_SKIN_CLEANUP_WORKER = Path("docker/demo-jupyter/scripts/anatomical_cleanup_worker.py")
 DEFAULT_USDZ_WORKER = Path("docker/demo-jupyter/scripts/glb_to_usdz_worker.py")
@@ -1133,6 +1144,30 @@ def rig_glb(
         None,
         help="Override MIALoadModel attention backend (auto, flash_attn, sdpa)",
     ),
+    auto_skin: bool = typer.Option(
+        True,
+        "--auto-skin/--no-auto-skin",
+        help="Weld duplicate triangle vertices and replace MIA weights with Blender automatic weights after download.",
+    ),
+    auto_skin_worker: Path = typer.Option(
+        DEFAULT_AUTO_SKIN_WORKER,
+        help="Isolated Blender automatic-weight worker script.",
+    ),
+    bpy_container: str = typer.Option(
+        "remesher-comfy3d",
+        help="Docker container used for automatic weighting when local Python cannot import bpy.",
+    ),
+    auto_skin_weld_distance: float = typer.Option(
+        1e-6,
+        min=1e-12,
+        help="Merge-by-distance threshold applied before Blender automatic weights.",
+    ),
+    max_unweighted_fraction: float = typer.Option(
+        0.005,
+        min=0.0,
+        max=1.0,
+        help="Maximum fraction of vertices Blender automatic weights may leave unweighted.",
+    ),
     poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
     timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
     verbose: bool = typer.Option(False, help="Show polling progress logs"),
@@ -1266,6 +1301,14 @@ def rig_glb(
         extensions=GLB_EXTENSIONS,
         verbose=verbose,
     )
+    downloaded = _postprocess_rig_downloads(
+        downloaded,
+        auto_skin=auto_skin,
+        worker_file=auto_skin_worker,
+        bpy_container=bpy_container,
+        weld_distance=auto_skin_weld_distance,
+        max_unweighted_fraction=max_unweighted_fraction,
+    )
     for path in downloaded:
         typer.echo(f"Downloaded {path}")
 
@@ -1291,12 +1334,25 @@ def _python_has_bpy() -> bool:
 
 
 def _copy_to_container(container: str, source: Path, dest: str) -> None:
-    _run_worker_command(["docker", "cp", str(source), f"{container}:{dest}"])
+    _run_worker_command(
+        ["docker", "cp", "--", str(source), f"{container}:{dest}"]
+    )
 
 
 def _copy_from_container(container: str, source: str, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    _run_worker_command(["docker", "cp", f"{container}:{source}", str(dest)])
+    _run_worker_command(
+        ["docker", "cp", "--", f"{container}:{source}", str(dest)]
+    )
+
+
+def _validate_docker_container_name(container: str) -> None:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", container):
+        raise typer.BadParameter(
+            "Invalid Docker container name; expected 1-128 characters using "
+            "letters, digits, underscore, period, or hyphen, starting with an "
+            "alphanumeric character."
+        )
 
 
 def _docker_bpy_exec_prefix(container: str) -> list[str]:
@@ -1307,7 +1363,8 @@ def _docker_bpy_exec_prefix(container: str) -> list[str]:
     so bpy workers must start without inheriting it.
     """
 
-    return ["docker", "exec", "-e", "LD_PRELOAD=", container]
+    _validate_docker_container_name(container)
+    return ["docker", "exec", "-e", "LD_PRELOAD=", "--", container]
 
 
 def _run_bpy_worker(
@@ -1338,9 +1395,20 @@ def _run_bpy_worker(
         _run_worker_command(cmd)
         return
 
+    _validate_docker_container_name(bpy_container)
     try:
-        subprocess.run(["docker", "inspect", bpy_container], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        subprocess.run(
+            ["docker", "inspect", "--", bpy_container],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+    except FileNotFoundError as exc:
+        raise typer.BadParameter(
+            "Local Python cannot import bpy and the Docker executable was not "
+            "found on PATH. Install Docker or use a Python environment with bpy."
+        ) from exc
+    except subprocess.CalledProcessError as exc:
         raise typer.BadParameter(
             "Local Python cannot import bpy and the Comfy3D bpy container is not available: "
             f"{bpy_container}. Start it first or pass --bpy-container."
@@ -1348,22 +1416,38 @@ def _run_bpy_worker(
 
     remote_dir = f"/tmp/remesher-bpy-worker-{uuid.uuid4().hex}"
     remote_script_dir = f"{remote_dir}/docker/demo-jupyter/scripts"
-    _run_worker_command(["docker", "exec", bpy_container, "mkdir", "-p", remote_script_dir])
     remote_worker = f"{remote_script_dir}/{worker_file.name}"
-    _copy_to_container(bpy_container, worker_file, remote_worker)
     helper = worker_file.with_name("anatomical_skinning.py")
-    if helper.exists():
-        _copy_to_container(bpy_container, helper, f"{remote_script_dir}/{helper.name}")
-
-    remote_inputs: list[str] = []
-    for index, source in enumerate(positional_inputs):
-        remote_path = f"{remote_dir}/input_{index}_{source.name}"
-        _copy_to_container(bpy_container, source, remote_path)
-        remote_inputs.append(remote_path)
-
-    remote_outputs = [f"{remote_dir}/output_{index}_{dest.name}" for index, dest in enumerate(positional_outputs)]
+    remote_inputs = [
+        f"{remote_dir}/input_{index}_{source.name}"
+        for index, source in enumerate(positional_inputs)
+    ]
+    remote_outputs = [
+        f"{remote_dir}/output_{index}_{dest.name}"
+        for index, dest in enumerate(positional_outputs)
+    ]
     remote_summary = f"{remote_dir}/{summary_json.name}"
     try:
+        _run_worker_command(
+            [
+                "docker",
+                "exec",
+                "--",
+                bpy_container,
+                "mkdir",
+                "-p",
+                remote_script_dir,
+            ]
+        )
+        _copy_to_container(bpy_container, worker_file, remote_worker)
+        if helper.exists():
+            _copy_to_container(
+                bpy_container, helper, f"{remote_script_dir}/{helper.name}"
+            )
+        for source, remote_path in zip(
+            positional_inputs, remote_inputs, strict=True
+        ):
+            _copy_to_container(bpy_container, source, remote_path)
         _run_worker_command(
             [
                 *_docker_bpy_exec_prefix(bpy_container),
@@ -1376,11 +1460,222 @@ def _run_bpy_worker(
                 remote_summary,
             ]
         )
+    except Exception:
+        # The worker writes structured diagnostics before returning non-zero.
+        # Recover them before deleting the isolated remote directory.
+        try:
+            _copy_from_container(bpy_container, remote_summary, summary_json)
+        except Exception:
+            pass
+        raise
+    else:
         for remote_path, local_path in zip(remote_outputs, positional_outputs, strict=True):
             _copy_from_container(bpy_container, remote_path, local_path)
         _copy_from_container(bpy_container, remote_summary, summary_json)
     finally:
-        subprocess.run(["docker", "exec", bpy_container, "rm", "-rf", remote_dir], check=False)
+        subprocess.run(
+            [
+                "docker",
+                "exec",
+                "--",
+                bpy_container,
+                "rm",
+                "-rf",
+                remote_dir,
+            ],
+            check=False,
+        )
+
+
+def _move_file_noreplace(source: Path, destination: Path) -> None:
+    """Atomically rename a file without replacing an existing destination."""
+    if sys.platform.startswith("linux"):
+        libc = ctypes.CDLL(None, use_errno=True)
+        renameat2 = getattr(libc, "renameat2", None)
+        if renameat2 is None:
+            raise OSError(
+                errno.ENOTSUP,
+                "libc does not expose renameat2(RENAME_NOREPLACE)",
+                str(destination),
+            )
+        renameat2.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        renameat2.restype = ctypes.c_int
+        result = renameat2(
+            -100,
+            os.fsencode(source),
+            -100,
+            os.fsencode(destination),
+            1,
+        )
+        if result != 0:
+            error_number = ctypes.get_errno()
+            raise OSError(
+                error_number,
+                os.strerror(error_number),
+                str(destination),
+            )
+        return
+    if os.name == "nt":
+        os.rename(source, destination)
+        return
+    raise OSError(
+        errno.ENOTSUP,
+        "Atomic no-replace rename is unsupported on this platform",
+        str(destination),
+    )
+
+
+def _publish_file_pair_noreplace(
+    *,
+    candidate_output: Path,
+    output_glb: Path,
+    candidate_summary: Path,
+    summary_json: Path,
+) -> None:
+    """Publish GLB first, then its hash-bound summary as the commit marker."""
+    try:
+        summary = json.loads(candidate_summary.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        raise typer.BadParameter(
+            f"Automatic-weight summary is not valid JSON: {candidate_summary}"
+        ) from exc
+    if not isinstance(summary, dict):
+        raise typer.BadParameter(
+            f"Automatic-weight summary must be a JSON object: {candidate_summary}"
+        )
+    expected_sha256 = summary.get("output_sha256")
+    if not isinstance(expected_sha256, str):
+        raise typer.BadParameter("Automatic-weight summary has no output_sha256")
+    digest = hashlib.sha256()
+    with candidate_output.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    actual_sha256 = digest.hexdigest()
+    if actual_sha256 != expected_sha256:
+        raise typer.BadParameter(
+            "Automatic-weight summary hash does not match candidate GLB: "
+            f"{expected_sha256} != {actual_sha256}"
+        )
+    _move_file_noreplace(candidate_output, output_glb)
+    _move_file_noreplace(candidate_summary, summary_json)
+
+
+def _postprocess_rig_downloads(
+    downloaded: list[Path],
+    *,
+    auto_skin: bool,
+    worker_file: Path,
+    bpy_container: str,
+    weld_distance: float,
+    max_unweighted_fraction: float,
+) -> list[Path]:
+    """Replace downloaded MIA weights with Blender automatic weights by default."""
+    if not auto_skin:
+        return downloaded
+    if not math.isfinite(weld_distance) or weld_distance <= 0:
+        raise typer.BadParameter(
+            "--auto-skin-weld-distance must be finite and greater than 0"
+        )
+    if not 0 <= max_unweighted_fraction <= 1:
+        raise typer.BadParameter(
+            "--max-unweighted-fraction must be between 0 and 1"
+        )
+    if not worker_file.exists() and not worker_file.is_absolute():
+        repo_candidate = Path(__file__).resolve().parents[2] / worker_file
+        if repo_candidate.exists():
+            worker_file = repo_candidate
+    if not worker_file.exists() or not worker_file.is_file():
+        raise typer.BadParameter(f"Automatic-weight worker not found: {worker_file}")
+
+    for output_glb in downloaded:
+        if output_glb.suffix.lower() != ".glb":
+            continue
+        if not output_glb.exists() or not output_glb.is_file():
+            raise typer.BadParameter(f"Downloaded MIA GLB not found: {output_glb}")
+        raw_mia = output_glb.with_name(
+            f"{output_glb.stem}.mia_raw{output_glb.suffix}"
+        )
+        summary_json = output_glb.with_name(
+            f"{output_glb.stem}.autoskin.json"
+        )
+        existing = [path for path in (raw_mia, summary_json) if path.exists()]
+        if existing:
+            raise typer.BadParameter(
+                "Refusing to overwrite existing automatic-weight artifact(s): "
+                + ", ".join(str(path) for path in existing)
+            )
+
+        workspace = Path(
+            tempfile.mkdtemp(
+                prefix=f".{output_glb.stem}.autoskin-",
+                dir=output_glb.parent,
+            )
+        )
+        workspace.chmod(0o700)
+        candidate_output = workspace / output_glb.name
+        candidate_summary = workspace / summary_json.name
+        try:
+            try:
+                _move_file_noreplace(output_glb, raw_mia)
+            except FileExistsError as exc:
+                raise typer.BadParameter(
+                    f"Refusing to overwrite existing automatic-weight artifact: {raw_mia}"
+                ) from exc
+            try:
+                _run_bpy_worker(
+                    worker_file=worker_file,
+                    positional_inputs=[raw_mia],
+                    positional_outputs=[candidate_output],
+                    extra_args=[
+                        "--weld-distance",
+                        str(weld_distance),
+                        "--max-unweighted-fraction",
+                        str(max_unweighted_fraction),
+                    ],
+                    summary_json=candidate_summary,
+                    bpy_container=bpy_container,
+                )
+            except Exception:
+                if candidate_summary.exists():
+                    try:
+                        _move_file_noreplace(candidate_summary, summary_json)
+                    except FileExistsError:
+                        pass
+                raise
+            if not candidate_output.exists() or not candidate_output.is_file():
+                raise typer.BadParameter(
+                    "Automatic-weight worker completed but output was not found: "
+                    f"{candidate_output}"
+                )
+            if not candidate_summary.exists() or not candidate_summary.is_file():
+                raise typer.BadParameter(
+                    "Automatic-weight worker completed but summary was not found: "
+                    f"{candidate_summary}"
+                )
+            try:
+                _publish_file_pair_noreplace(
+                    candidate_output=candidate_output,
+                    output_glb=output_glb,
+                    candidate_summary=candidate_summary,
+                    summary_json=summary_json,
+                )
+            except FileExistsError as exc:
+                raise typer.BadParameter(
+                    "Refusing to overwrite a concurrently created automatic-weight "
+                    f"artifact: {exc.filename}"
+                ) from exc
+        finally:
+            shutil.rmtree(workspace, ignore_errors=True)
+        typer.echo(f"Raw MIA GLB: {raw_mia}")
+        typer.echo(f"Blender auto-skinned GLB: {output_glb}")
+        typer.echo(f"Auto-skin summary: {summary_json}")
+    return downloaded
 
 
 def _cleanup_output_base_name(output_name: str | None, *, default: str) -> str:
@@ -1707,6 +2002,30 @@ def text_to_rigged_glb(
         None,
         help="Override MIALoadModel attention backend (auto, flash_attn, sdpa)",
     ),
+    auto_skin: bool = typer.Option(
+        True,
+        "--auto-skin/--no-auto-skin",
+        help="Weld duplicate triangle vertices and replace MIA weights with Blender automatic weights after download.",
+    ),
+    auto_skin_worker: Path = typer.Option(
+        DEFAULT_AUTO_SKIN_WORKER,
+        help="Isolated Blender automatic-weight worker script.",
+    ),
+    bpy_container: str = typer.Option(
+        "remesher-comfy3d",
+        help="Docker container used for automatic weighting when local Python cannot import bpy.",
+    ),
+    auto_skin_weld_distance: float = typer.Option(
+        1e-6,
+        min=1e-12,
+        help="Merge-by-distance threshold applied before Blender automatic weights.",
+    ),
+    max_unweighted_fraction: float = typer.Option(
+        0.005,
+        min=0.0,
+        max=1.0,
+        help="Maximum fraction of vertices Blender automatic weights may leave unweighted.",
+    ),
     poll_interval: float = typer.Option(2.0, min=0.5, help="Polling interval seconds"),
     timeout: float = typer.Option(1800.0, min=1.0, help="Max wait time in seconds"),
     verbose: bool = typer.Option(False, help="Show polling progress logs"),
@@ -1954,6 +2273,14 @@ def text_to_rigged_glb(
     if not rigged_downloads:
         typer.echo("No GLB reference found in rig stage history outputs.")
         return
+    rigged_downloads = _postprocess_rig_downloads(
+        rigged_downloads,
+        auto_skin=auto_skin,
+        worker_file=auto_skin_worker,
+        bpy_container=bpy_container,
+        weld_distance=auto_skin_weld_distance,
+        max_unweighted_fraction=max_unweighted_fraction,
+    )
     for path in rigged_downloads:
         typer.echo(f"Downloaded {path}")
 
@@ -2070,6 +2397,7 @@ def skin_cleanup_glb(
     import shutil
     import subprocess
 
+    _validate_docker_container_name(container)
     if not input_glb.exists():
         raise typer.BadParameter(f"Input GLB not found: {input_glb}")
     if not worker_file.exists() and not worker_file.is_absolute():
@@ -2126,7 +2454,7 @@ def skin_cleanup_glb(
         f"/app/comfy/output/comfyui/skin_cleanup/{summary_host.name}",
     ]
     clear = subprocess.run(
-        ["docker", "exec", container, "rm", "-f", "--", *container_stale_outputs],
+        ["docker", "exec", "--", container, "rm", "-f", "--", *container_stale_outputs],
         capture_output=True,
         text=True,
         timeout=60,
@@ -2143,7 +2471,7 @@ def skin_cleanup_glb(
 
     staged_helper_container = f"/app/comfy/input/scripts/{staged_helper.name}"
     helper_container = "/app/comfy/custom_nodes/ComfyUI-UniRig/nodes/anatomical_skinning.py"
-    stage_command = ["docker", "exec", container, "bash", "-lc", f"mkdir -p /app/comfy/output/skin_cleanup && cp {staged_worker_container} {worker_container} && if [ -f {staged_helper_container} ]; then cp {staged_helper_container} {helper_container}; fi"]
+    stage_command = ["docker", "exec", "--", container, "bash", "-lc", f"mkdir -p /app/comfy/output/skin_cleanup && cp {staged_worker_container} {worker_container} && if [ -f {staged_helper_container} ]; then cp {staged_helper_container} {helper_container}; fi"]
     stage = subprocess.run(stage_command, capture_output=True, text=True, timeout=60)
     if stage.returncode != 0:
         if stage.stderr:
@@ -2210,6 +2538,7 @@ def retarget_glb(
     import shutil
     import subprocess
 
+    _validate_docker_container_name(container)
     if not rigged_glb.exists():
         raise typer.BadParameter(f"Rigged GLB not found: {rigged_glb}")
     if not animation_fbx.exists():
@@ -2252,7 +2581,7 @@ def retarget_glb(
     summary_container = f"/app/comfy/output/animated/{summary_host.name}"
 
     stage_command = [
-        "docker", "exec", container,
+        "docker", "exec", "--", container,
         "bash", "-lc",
         f"cp {staged_worker_container} {worker_container}",
     ]
