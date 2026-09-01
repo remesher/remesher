@@ -157,6 +157,30 @@ def _fill_unweighted_from_nearest_bone(mesh, armature) -> int:
     return filled
 
 
+def _small_component_vertices_to_remove(
+    components: dict[int, list[int]], max_component_vertices: int
+) -> list[int]:
+    if len(components) <= 1:
+        return []
+    largest_root = max(components, key=lambda root: len(components[root]))
+    return [
+        index
+        for root, component in components.items()
+        if root != largest_root and len(component) <= max_component_vertices
+        for index in component
+    ]
+
+
+def _removed_component_count(
+    components: dict[int, list[int]], removed_vertices: list[int]
+) -> int:
+    removed = set(removed_vertices)
+    return sum(
+        bool(component) and component[0] in removed
+        for component in components.values()
+    )
+
+
 def _remove_small_disconnected_components(
     mesh,
     *,
@@ -189,12 +213,9 @@ def _remove_small_disconnected_components(
     components: dict[int, list[int]] = {}
     for index in range(vertex_count):
         components.setdefault(find(index), []).append(index)
-    remove = [
-        index
-        for component in components.values()
-        if len(component) <= max_component_vertices
-        for index in component
-    ]
+    remove = _small_component_vertices_to_remove(
+        components, max_component_vertices
+    )
     removed_fraction = len(remove) / vertex_count if vertex_count else 1.0
     if removed_fraction > max_removed_fraction:
         raise RuntimeError(
@@ -216,8 +237,8 @@ def _remove_small_disconnected_components(
     return {
         "component_count": len(components),
         "largest_component_vertices": component_sizes[0] if component_sizes else 0,
-        "small_components_removed": sum(
-            size <= max_component_vertices for size in component_sizes
+        "small_components_removed": _removed_component_count(
+            components, remove
         ),
         "vertices_removed": len(remove),
         "removed_fraction": removed_fraction,
@@ -577,7 +598,12 @@ def main() -> int:
             "error": f"{type(exc).__name__}: {exc}",
             "traceback": traceback.format_exc(),
         }
-        _write_json_noreplace(Path(args.summary_json), result)
+        try:
+            _write_json_noreplace(Path(args.summary_json), result)
+        except OSError as summary_exc:
+            result["summary_write_error"] = (
+                f"{type(summary_exc).__name__}: {summary_exc}"
+            )
         print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
         return 1
     _write_json_noreplace(Path(args.summary_json), result)

@@ -10,7 +10,9 @@ from comfy_prompt_cli.workers.blender_auto_skin_worker import (
     _matrix_max_abs_delta,
     _new_temp_glb_path,
     _promote_file_noreplace,
+    _removed_component_count,
     _remove_temp_glb_path,
+    _small_component_vertices_to_remove,
     _validate_weld_distance,
     _write_json_noreplace,
 )
@@ -137,3 +139,38 @@ def test_worker_reports_enotsup_when_libc_lacks_renameat2(
     assert exc_info.value.errno == worker.errno.ENOTSUP
     assert source.read_bytes() == b"source"
     assert not destination.exists()
+
+
+def test_small_component_cleanup_never_selects_the_sole_or_largest_component():
+    sole = {0: [0, 1, 2]}
+    multiple = {0: [0, 1, 2], 3: [3], 4: [4, 5]}
+    sole_removed = _small_component_vertices_to_remove(sole, 128)
+    multiple_removed = _small_component_vertices_to_remove(multiple, 128)
+
+    assert sole_removed == []
+    assert _removed_component_count(sole, sole_removed) == 0
+    assert multiple_removed == [3, 4, 5]
+    assert _removed_component_count(multiple, multiple_removed) == 2
+
+
+def test_failure_still_emits_diagnostics_when_summary_already_exists(
+    tmp_path, monkeypatch, capsys
+):
+    summary = tmp_path / "summary.json"
+    summary.write_text('{"owner": "peer"}')
+    monkeypatch.setattr(
+        worker.sys,
+        "argv",
+        ["worker", "input.glb", "output.glb", "--summary-json", str(summary)],
+    )
+
+    def fail_skin(*args, **kwargs):
+        raise RuntimeError("original weighting failure")
+
+    monkeypatch.setattr(worker, "auto_skin_glb", fail_skin)
+
+    assert worker.main() == 1
+    captured = capsys.readouterr()
+    assert "original weighting failure" in captured.err
+    assert "summary_write_error" in captured.err
+    assert summary.read_text() == '{"owner": "peer"}'
