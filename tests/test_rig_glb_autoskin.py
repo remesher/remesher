@@ -440,6 +440,27 @@ def test_move_file_noreplace_preserves_concurrent_destination(tmp_path):
     assert destination.read_bytes() == b"concurrent"
 
 
+def test_cli_reports_enotsup_when_libc_lacks_renameat2(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source.glb"
+    destination = tmp_path / "destination.glb"
+    source.write_bytes(b"source")
+    monkeypatch.setattr(cli.sys, "platform", "linux")
+    monkeypatch.setattr(
+        cli.ctypes,
+        "CDLL",
+        lambda *args, **kwargs: SimpleNamespace(),
+    )
+
+    with pytest.raises(OSError, match="does not expose renameat2") as exc_info:
+        cli._move_file_noreplace(source, destination)
+
+    assert exc_info.value.errno == cli.errno.ENOTSUP
+    assert source.read_bytes() == b"source"
+    assert not destination.exists()
+
+
 def test_postprocess_never_replaces_concurrently_created_final_glb(
     tmp_path, monkeypatch
 ):

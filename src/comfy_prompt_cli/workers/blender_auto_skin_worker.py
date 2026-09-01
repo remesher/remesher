@@ -52,7 +52,13 @@ def _promote_file_noreplace(source: Path, destination: Path) -> None:
     """Atomically rename a file without replacing an existing destination."""
     if sys.platform.startswith("linux"):
         libc = ctypes.CDLL(None, use_errno=True)
-        renameat2 = libc.renameat2
+        renameat2 = getattr(libc, "renameat2", None)
+        if renameat2 is None:
+            raise OSError(
+                errno.ENOTSUP,
+                "libc does not expose renameat2(RENAME_NOREPLACE)",
+                str(destination),
+            )
         renameat2.argtypes = [
             ctypes.c_int,
             ctypes.c_char_p,

@@ -116,3 +116,24 @@ def test_summary_write_never_replaces_concurrent_destination(tmp_path):
         _write_json_noreplace(summary, {"owner": "worker"})
 
     assert summary.read_text() == '{"owner": "concurrent"}'
+
+
+def test_worker_reports_enotsup_when_libc_lacks_renameat2(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "source.glb"
+    destination = tmp_path / "destination.glb"
+    source.write_bytes(b"source")
+    monkeypatch.setattr(worker.sys, "platform", "linux")
+    monkeypatch.setattr(
+        worker.ctypes,
+        "CDLL",
+        lambda *args, **kwargs: SimpleNamespace(),
+    )
+
+    with pytest.raises(OSError, match="does not expose renameat2") as exc_info:
+        _promote_file_noreplace(source, destination)
+
+    assert exc_info.value.errno == worker.errno.ENOTSUP
+    assert source.read_bytes() == b"source"
+    assert not destination.exists()
