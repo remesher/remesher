@@ -404,6 +404,33 @@ def test_docker_worker_distinguishes_missing_docker_executable(
         )
 
 
+@pytest.mark.parametrize(
+    ("command", "required_args"),
+    [
+        ("skin-cleanup-glb", ["--input-glb", "missing.glb"]),
+        (
+            "retarget-glb",
+            [
+                "--rigged-glb",
+                "missing.glb",
+                "--animation",
+                "missing.fbx",
+            ],
+        ),
+    ],
+)
+def test_container_commands_reject_invalid_name_before_staging(
+    command, required_args
+):
+    result = CliRunner().invoke(
+        app,
+        [command, *required_args, "--container=-unsafe"],
+    )
+
+    assert result.exit_code != 0
+    assert "Invalid Docker container name" in result.output
+
+
 def test_docker_worker_setup_copy_failure_still_cleans_remote_directory(
     tmp_path, monkeypatch
 ):

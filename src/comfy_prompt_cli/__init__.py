@@ -1363,6 +1363,7 @@ def _docker_bpy_exec_prefix(container: str) -> list[str]:
     so bpy workers must start without inheriting it.
     """
 
+    _validate_docker_container_name(container)
     return ["docker", "exec", "-e", "LD_PRELOAD=", "--", container]
 
 
@@ -2396,6 +2397,7 @@ def skin_cleanup_glb(
     import shutil
     import subprocess
 
+    _validate_docker_container_name(container)
     if not input_glb.exists():
         raise typer.BadParameter(f"Input GLB not found: {input_glb}")
     if not worker_file.exists() and not worker_file.is_absolute():
@@ -2452,7 +2454,7 @@ def skin_cleanup_glb(
         f"/app/comfy/output/comfyui/skin_cleanup/{summary_host.name}",
     ]
     clear = subprocess.run(
-        ["docker", "exec", container, "rm", "-f", "--", *container_stale_outputs],
+        ["docker", "exec", "--", container, "rm", "-f", "--", *container_stale_outputs],
         capture_output=True,
         text=True,
         timeout=60,
@@ -2469,7 +2471,7 @@ def skin_cleanup_glb(
 
     staged_helper_container = f"/app/comfy/input/scripts/{staged_helper.name}"
     helper_container = "/app/comfy/custom_nodes/ComfyUI-UniRig/nodes/anatomical_skinning.py"
-    stage_command = ["docker", "exec", container, "bash", "-lc", f"mkdir -p /app/comfy/output/skin_cleanup && cp {staged_worker_container} {worker_container} && if [ -f {staged_helper_container} ]; then cp {staged_helper_container} {helper_container}; fi"]
+    stage_command = ["docker", "exec", "--", container, "bash", "-lc", f"mkdir -p /app/comfy/output/skin_cleanup && cp {staged_worker_container} {worker_container} && if [ -f {staged_helper_container} ]; then cp {staged_helper_container} {helper_container}; fi"]
     stage = subprocess.run(stage_command, capture_output=True, text=True, timeout=60)
     if stage.returncode != 0:
         if stage.stderr:
@@ -2536,6 +2538,7 @@ def retarget_glb(
     import shutil
     import subprocess
 
+    _validate_docker_container_name(container)
     if not rigged_glb.exists():
         raise typer.BadParameter(f"Rigged GLB not found: {rigged_glb}")
     if not animation_fbx.exists():
@@ -2578,7 +2581,7 @@ def retarget_glb(
     summary_container = f"/app/comfy/output/animated/{summary_host.name}"
 
     stage_command = [
-        "docker", "exec", container,
+        "docker", "exec", "--", container,
         "bash", "-lc",
         f"cp {staged_worker_container} {worker_container}",
     ]

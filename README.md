@@ -138,7 +138,9 @@ their combined size is no more than 0.5% of the welded mesh.
 
 Use `--no-auto-skin` to keep the previous MIA-weight output unchanged. Advanced
 controls include `--auto-skin-weld-distance`, `--max-unweighted-fraction`,
-`--auto-skin-worker`, and `--bpy-container`.
+`--auto-skin-worker`, and `--bpy-container`. Atomic no-replace publication is
+supported on Linux (`renameat2`) and Windows; unsupported platforms fail cleanly
+with `ENOTSUP`, where `--no-auto-skin` remains available.
 
 ### 6) Text to GLB (end-to-end)
 
