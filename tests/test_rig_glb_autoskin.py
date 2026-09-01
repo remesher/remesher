@@ -377,6 +377,33 @@ def test_docker_worker_rejects_invalid_container_names(
         )
 
 
+def test_docker_worker_distinguishes_missing_docker_executable(
+    tmp_path, monkeypatch
+):
+    worker = tmp_path / "worker.py"
+    worker.write_text("# worker")
+    input_glb = tmp_path / "input.glb"
+    input_glb.write_bytes(b"glb")
+    monkeypatch.setattr(cli, "_python_has_bpy", lambda: False)
+    monkeypatch.setattr(
+        cli.subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            FileNotFoundError("docker")
+        ),
+    )
+
+    with pytest.raises(typer.BadParameter, match="Docker executable.*not.*PATH"):
+        cli._run_bpy_worker(
+            worker_file=worker,
+            positional_inputs=[input_glb],
+            positional_outputs=[tmp_path / "output.glb"],
+            extra_args=[],
+            summary_json=tmp_path / "summary.json",
+            bpy_container="comfy3d-test",
+        )
+
+
 def test_docker_worker_setup_copy_failure_still_cleans_remote_directory(
     tmp_path, monkeypatch
 ):

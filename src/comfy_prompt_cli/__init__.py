@@ -1402,7 +1402,12 @@ def _run_bpy_worker(
             stderr=subprocess.DEVNULL,
             check=True,
         )
-    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+    except FileNotFoundError as exc:
+        raise typer.BadParameter(
+            "Local Python cannot import bpy and the Docker executable was not "
+            "found on PATH. Install Docker or use a Python environment with bpy."
+        ) from exc
+    except subprocess.CalledProcessError as exc:
         raise typer.BadParameter(
             "Local Python cannot import bpy and the Comfy3D bpy container is not available: "
             f"{bpy_container}. Start it first or pass --bpy-container."
