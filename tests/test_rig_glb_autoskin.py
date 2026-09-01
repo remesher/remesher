@@ -555,3 +555,57 @@ def test_pair_rejects_mismatched_hash_before_publication(tmp_path):
 
     assert not summary_json.exists()
     assert not output_glb.exists()
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (b"{truncated", "not valid JSON"),
+        (b"\xff", "not valid JSON"),
+        (b"[]", "must be a JSON object"),
+    ],
+)
+def test_pair_rejects_malformed_summary_before_publication(
+    tmp_path, payload, message
+):
+    candidate_output = tmp_path / "candidate.glb"
+    candidate_summary = tmp_path / "candidate.json"
+    output_glb = tmp_path / "final.glb"
+    summary_json = tmp_path / "final.json"
+    candidate_output.write_bytes(b"candidate")
+    candidate_summary.write_bytes(payload)
+
+    with pytest.raises(typer.BadParameter, match=rf"{message}.*candidate.json"):
+        cli._publish_file_pair_noreplace(
+            candidate_output=candidate_output,
+            output_glb=output_glb,
+            candidate_summary=candidate_summary,
+            summary_json=summary_json,
+        )
+
+    assert not summary_json.exists()
+    assert not output_glb.exists()
+
+
+def test_postprocess_validation_errors_use_cli_flag_names(tmp_path):
+    downloaded = tmp_path / "robot.glb"
+    downloaded.write_bytes(b"raw")
+
+    with pytest.raises(typer.BadParameter, match="--auto-skin-weld-distance"):
+        _postprocess_rig_downloads(
+            [downloaded],
+            auto_skin=True,
+            worker_file=cli.DEFAULT_AUTO_SKIN_WORKER,
+            bpy_container="unused",
+            weld_distance=float("inf"),
+            max_unweighted_fraction=0.005,
+        )
+    with pytest.raises(typer.BadParameter, match="--max-unweighted-fraction"):
+        _postprocess_rig_downloads(
+            [downloaded],
+            auto_skin=True,
+            worker_file=cli.DEFAULT_AUTO_SKIN_WORKER,
+            bpy_container="unused",
+            weld_distance=1e-6,
+            max_unweighted_fraction=2.0,
+        )

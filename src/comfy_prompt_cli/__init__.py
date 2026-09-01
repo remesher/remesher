@@ -1533,7 +1533,16 @@ def _publish_file_pair_noreplace(
     summary_json: Path,
 ) -> None:
     """Publish GLB first, then its hash-bound summary as the commit marker."""
-    summary = json.loads(candidate_summary.read_text(encoding="utf-8"))
+    try:
+        summary = json.loads(candidate_summary.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
+        raise typer.BadParameter(
+            f"Automatic-weight summary is not valid JSON: {candidate_summary}"
+        ) from exc
+    if not isinstance(summary, dict):
+        raise typer.BadParameter(
+            f"Automatic-weight summary must be a JSON object: {candidate_summary}"
+        )
     expected_sha256 = summary.get("output_sha256")
     if not isinstance(expected_sha256, str):
         raise typer.BadParameter("Automatic-weight summary has no output_sha256")
@@ -1565,10 +1574,12 @@ def _postprocess_rig_downloads(
         return downloaded
     if not math.isfinite(weld_distance) or weld_distance <= 0:
         raise typer.BadParameter(
-            "auto_skin_weld_distance must be finite and greater than 0"
+            "--auto-skin-weld-distance must be finite and greater than 0"
         )
     if not 0 <= max_unweighted_fraction <= 1:
-        raise typer.BadParameter("max_unweighted_fraction must be between 0 and 1")
+        raise typer.BadParameter(
+            "--max-unweighted-fraction must be between 0 and 1"
+        )
     if not worker_file.exists() and not worker_file.is_absolute():
         repo_candidate = Path(__file__).resolve().parents[2] / worker_file
         if repo_candidate.exists():
