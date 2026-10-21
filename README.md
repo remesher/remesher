@@ -20,6 +20,21 @@ An agent harness that uses a small Typer CLI to submit ComfyUI API prompts, stre
 
 ---
 
+## Native ComfyUI investigation (optional, preflight only)
+
+For core TRELLIS.2/Pixal3D without Comfy3D, see the
+[native backend feasibility and acceptance gates](docs/native-comfy-backend.md).
+A read-only inventory check is available against an operator-managed local server:
+
+```sh
+uv run python -m comfy_prompt_cli.native_preflight --server http://127.0.0.1:8188
+```
+
+This is **not a generation backend or local launcher yet**. Exit 0 means only
+that the pinned combined editor-template inventory matches, not that models,
+hardware, or an API workflow have been validated. Existing generation defaults
+and legacy workflows are unchanged.
+
 ## Requirements
 
 - Python + [`uv`](https://docs.astral.sh/uv/)
