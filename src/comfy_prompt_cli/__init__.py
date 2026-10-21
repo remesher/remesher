@@ -1041,6 +1041,7 @@ def image_to_glb(
     native_startup_timeout: float = typer.Option(120, min=1, help="native-local startup deadline seconds."),
     native_model: str = typer.Option("trellis2", help="Native diffusion branch: trellis2 or pixal3d."),
     native_camera_angle: float = typer.Option(49.13, min=1, max=170, help="Pixal3D camera_angle_x (degrees); no automatic MoGe estimation."),
+    no_decimation: bool = typer.Option(False, "--no-decimation", help="Native only: bypass mesh simplification; no face/vertex cap, preserve UV/PBR export."),
     image: Path = typer.Option(
         ..., exists=True, readable=True, help="Local input image path"
     ),
@@ -1069,6 +1070,8 @@ def image_to_glb(
     """Convert image to GLB; legacy Comfy3D remains the default backend."""
     if backend not in {"comfy3d", "native", "native-local"}:
         raise typer.BadParameter("backend must be comfy3d, native or native-local")
+    if no_decimation and backend == "comfy3d":
+        raise typer.BadParameter("--no-decimation requires a native backend")
     if native_config is not None:
         if backend != "native-local":
             raise typer.BadParameter("--native-config requires --backend native-local")
@@ -1140,6 +1143,7 @@ def image_to_glb(
                         mesh_seed=42 if mesh_seed is None else mesh_seed,
                         texture_seed=43 if texture_seed is None else texture_seed,
                         target_face_num=80000 if target_face_num is None else target_face_num,
+                        no_decimation=no_decimation,
                         filename_prefix=filename_prefix or "remesher")
             for path in downloaded:
                 typer.echo(f"Downloaded {path}")

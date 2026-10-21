@@ -40,6 +40,17 @@ def test_native_graph_is_api_and_maps_backend_overrides():
     )
 
 
+def test_no_decimation_preserves_generated_geometry_and_pbr_graph():
+    baseline = native_backend.build_prompt("source.png")
+    raw = native_backend.build_prompt("source.png", no_decimation=True)
+    expected = dict(baseline)
+    del expected["decimate"]
+    expected["unwrap"] = {**baseline["unwrap"], "inputs": {
+        **baseline["unwrap"]["inputs"], "mesh": ["shape_decode", 0]}}
+    assert raw == expected
+    assert not any(n["class_type"] == "DecimateMesh" for n in raw.values())
+
+
 def test_preupload_schema_does_not_require_image_already_on_server():
     graph = {"image": {"class_type": "LoadImage", "inputs": {"image": "new-local.png"}}}
     info = {

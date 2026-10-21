@@ -25,6 +25,7 @@ def build_prompt(
     mesh_seed=42,
     texture_seed=43,
     target_face_num=80000,
+    no_decimation=False,
     filename_prefix="remesher",
     camera_angle=49.13,
 ):
@@ -171,7 +172,7 @@ def build_prompt(
         vae=texture_vae,
         shape_subdivides=["shape_decode", 1],
     )
-    reduced = node(
+    reduced = mesh if no_decimation else node(
         "decimate",
         "DecimateMesh",
         mesh=mesh,

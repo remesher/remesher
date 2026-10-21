@@ -178,6 +178,17 @@ HTTP operation (30-second inactivity timeout).
 
 ### Exact workflow scope
 
+Use `image-to-glb --backend native-local --native-config /absolute/setup.json
+--image /absolute/prepared.png --no-decimation` to export the generated geometry
+without the `DecimateMesh` node or any face/vertex cap. The decoded shape feeds
+UV unwrap directly; texture baking and PBR GLB export are retained. This is an
+opt-in for native/native-local only; legacy rejects it. The default remains the
+80,000-face simplification target. With no-decimation, an otherwise valid
+`--target-face-num` value has no effect. Generation resolution, seeds, sampler
+settings, UV weld distance and atlas resolution are unchanged. This is not a
+watertightness/quality guarantee; UV unwrapping still welds/splits seam vertices.
+Larger meshes increase memory use, UV processing time and file size.
+
 `examples/img_to_native_trellis2.json` is a plain API-format example;
 `native_backend.build_prompt` builds the equivalent graph and maps native
 image/seed/face-count/prefix overrides. The source interfaces were rechecked at

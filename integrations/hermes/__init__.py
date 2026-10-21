@@ -329,6 +329,11 @@ def _generate(args):
             cfg["workflow"] = existing_path(cfg.get("workflow", ""), "workflow")
         timeout = args.get("timeout_seconds", 900)
         faces = args.get("target_face_num", 80000)
+        no_decimation = args.get("no_decimation", False)
+        if type(no_decimation) is not bool:
+            raise ValueError("no_decimation must be a boolean")
+        if no_decimation and cfg["backend"] == "comfy3d":
+            raise ValueError("no_decimation requires a native backend")
         if type(timeout) is not int or not 1 <= timeout <= 1800:
             raise ValueError("timeout_seconds must be an integer from 1 to 1800")
         if type(faces) is not int or not 1000 <= faces <= 200000:
@@ -361,8 +366,7 @@ def _generate(args):
             *([] if "native_config" in cfg else ["--out-dir", str(folder / "output")]),
             "--filename-prefix",
             "hermes_" + job_id,
-            "--target-face-num",
-            str(faces),
+            *(["--no-decimation"] if no_decimation else ["--target-face-num", str(faces)]),
             "--timeout",
             str(timeout),
         ]
@@ -690,7 +694,13 @@ def register(ctx):
                     "maximum": 1800,
                     "default": 900,
                 },
+                "no_decimation": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Native only: bypass simplification with no face/vertex cap; retain UV/PBR export.",
+                },
                 "target_face_num": {
+                    "description": "Simplified face target; ignored when no_decimation is true.",
                     "type": "integer",
                     "minimum": 1000,
                     "maximum": 200000,

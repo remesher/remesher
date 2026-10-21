@@ -163,7 +163,7 @@ The CLI owns its port/startup defaults; no unsupported future options are used.
 | Tool | Result |
 |---|---|
 | `remesher_health` | `healthy/unhealthy` connectivity for server modes; `configured` path validation only for native-local, which never starts a server; may return `timed_out/unavailable` |
-| `remesher_generate` | Inputs: absolute local PNG/JPEG/WebP `image` (max 20 MiB), optional `timeout_seconds` 1–1800 (900 default), `target_face_num` 1000–200000 (80000 default). Returns `queued` + job_id or `busy`/rejection |
+| `remesher_generate` | Inputs: absolute local PNG/JPEG/WebP `image` (max 20 MiB), optional `timeout_seconds` 1–1800 (900 default), `target_face_num` 1000–200000 (80000 default), `no_decimation` boolean (false default; native only). With `no_decimation: true`, no face-count argument is sent and generated geometry goes directly to UV/PBR export. Returns `queued` + job_id or `busy`/rejection |
 | `remesher_job` | Persistent status by 32-character lowercase hex job_id |
 | `remesher_assets` | Successful GLB paths, byte sizes, SHA-256 and MIME types |
 

@@ -32,6 +32,22 @@ class PluginTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
 
+    def test_no_decimation_native_request_has_no_face_limit(self):
+        plugin, image = self.fixture('assert "--no-decimation" in sys.argv\nassert "--target-face-num" not in sys.argv\n')
+        with patch.dict(os.environ, {"REMESHER_BACKEND": "native"}):
+            result = plugin.generate({"image": str(image), "no_decimation": True})
+        self.assertEqual(result["status"], "queued", result)
+        request = json.loads((Path(result["log_path"]).parent / "request.json").read_text())
+        self.assertIn("--no-decimation", request["argv"])
+        self.assertNotIn("--target-face-num", request["argv"])
+        self.wait_job(plugin, result["job_id"])
+
+    def test_no_decimation_rejects_legacy_and_invalid_boolean(self):
+        plugin, image = self.fixture("pass\n")
+        for extra in ({"no_decimation": True}, {"no_decimation": "true"}):
+            result = plugin.generate({"image": str(image), **extra})
+            self.assertEqual(result["status"], "invalid_request", result)
+
     def test_native_config_uses_private_snapshot_without_conflicting_flags(self):
         plugin, image = self.fixture("""
 import json
