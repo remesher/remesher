@@ -15,8 +15,10 @@ processes and explicitly labeled protocol fixtures. Successful fixture downloads
 do not demonstrate inference or output quality. Native stage execution on Spark
 and CPU/MPS/ROCm remains a separate acceptance gate.
 
-No models, packages, environments, or GPU resources are automatically provisioned.
-The user must explicitly supply an existing interpreter, checkout and weights.
+No models, packages, environments, or GPU resources are implicitly provisioned.
+The [agent setup CLI](native-setup.md) can explicitly provision a pinned TRELLIS
+core runtime with separate install/download opt-ins, or reuse existing paths.
+Its saved config feeds the owned launcher without reconstructing path flags.
 The old read-only preflight remains available independently; its combined-editor
 inventory is broader than the minimal generation graph and is not used as a
 misleading generation-success signal.
@@ -154,7 +156,9 @@ comfy-prompt-cli image-to-glb --backend native-local \
 `native-local` currently requires POSIX and the main thread. It starts an argv
 list, no shell, on numeric loopback, with custom and partner/API nodes disabled.
 Input/output/temp/user directories are private to a unique run. Model discovery
-uses the explicitly selected checkout's existing model configuration. The launcher
+uses the explicitly selected checkout's existing model configuration unless
+`--native-models` or `--native-config` supplies an explicit model root through a
+private extra-model-paths config. The launcher
 does not create a model directory, run pip, download weights or copy secrets.
 `--native-port 0` selects an unused port; explicit occupied ports are rejected.
 Readiness requires both child liveness and exact `/system_stats.system.argv`

@@ -40,6 +40,27 @@ def test_owned_child_ready_and_reaped(checkout, tmp_path):
     assert process.poll() is not None
 
 
+def test_configured_model_path_is_visible_to_child(checkout, tmp_path):
+    import json
+
+    models = tmp_path / "models with spaces"
+    models.mkdir()
+    (models / "vae").mkdir()
+    (models / "vae" / "fixture.safetensors").write_bytes(b"fixture")
+    code = (checkout / "main.py").read_text()
+    (checkout / "main.py").write_text(
+        "import json, pathlib, sys\nsettings=json.loads(pathlib.Path(sys.argv[sys.argv.index('--extra-model-paths-config')+1]).read_text())\nassert (pathlib.Path(settings['remesher']['base_path'])/'vae'/'fixture.safetensors').read_bytes()==b'fixture'\n"
+        + code
+    )
+    with native_runtime.LocalRuntime(
+        Path(sys.executable), checkout, tmp_path / "runs", models=models, device="cpu"
+    ) as runtime:
+        settings = json.loads((runtime.run_dir / "models.yaml").read_text())
+        assert settings["remesher"]["base_path"] == str(models)
+        assert settings["remesher"]["is_default"] is True
+        assert runtime.process.poll() is None
+
+
 def test_sigterm_restores_handler_and_reaps_owned_child(checkout, tmp_path):
     import os
     import signal

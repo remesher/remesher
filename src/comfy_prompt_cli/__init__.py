@@ -1018,10 +1018,21 @@ def pad_tpose_image(
     typer.echo(f"Padded T-pose image: {padded}")
 
 
+@app.command("native-setup", context_settings={"allow_extra_args": True, "ignore_unknown_options": True}, add_help_option=False)
+def native_setup_command(ctx: typer.Context):
+    """Plan/check/apply a pinned runtime; use native-setup --help for options."""
+    from .native_setup import main as setup_main
+    raise typer.Exit(setup_main(ctx.args))
+
+
 @app.command("image-to-glb")
 def image_to_glb(
+    ctx: typer.Context,
     backend: str = typer.Option("comfy3d", help="comfy3d (legacy), native (existing loopback server), native-local (owned child)."),
     native_server: str = typer.Option("http://127.0.0.1:8188", help="Existing numeric loopback native ComfyUI HTTP origin."),
+    native_config: Annotated[Path | None, typer.Option(help="Native setup JSON; supplies all runtime paths and output/device policy.")] = None,
+    native_models: Annotated[Path | None, typer.Option(help="Absolute model root visible to native-local child.")] = None,
+    native_allow_low_memory: bool = typer.Option(False, help="Explicitly acknowledge setup memory policy risk; never raises resource limits."),
     native_python: Annotated[Path | None, typer.Option(help="Absolute Python executable for native-local; no auto-install.")] = None,
     native_checkout: Annotated[Path | None, typer.Option(help="Absolute ComfyUI checkout for native-local.")] = None,
     native_runs: Annotated[Path, typer.Option(help="Private per-run native-local directories and retained logs.")] = Path("native-runs"),
@@ -1058,6 +1069,25 @@ def image_to_glb(
     """Convert image to GLB; legacy Comfy3D remains the default backend."""
     if backend not in {"comfy3d", "native", "native-local"}:
         raise typer.BadParameter("backend must be comfy3d, native or native-local")
+    if native_config is not None:
+        if backend != "native-local":
+            raise typer.BadParameter("--native-config requires --backend native-local")
+        try:
+            from .native_setup import check, load_config
+            conflicts = [name for name in ("native_python", "native_checkout", "native_models", "native_runs", "native_device", "out_dir")
+                         if getattr(ctx.get_parameter_source(name), "name", None) == "COMMANDLINE"]
+            if conflicts:
+                raise ValueError("--native-config conflicts with explicit " + ", ".join(conflicts))
+            if native_model != "trellis2":
+                raise ValueError("Setup config supports only the pinned TRELLIS core preset")
+            setup = load_config(native_config)
+            report = check(setup, allow_low_memory=native_allow_low_memory)
+            if not report["ready"]:
+                raise ValueError("Native setup not ready: " + "; ".join(report["blockers"]))
+            native_python, native_checkout, native_runs = setup.python, setup.checkout, setup.runs
+            native_models, native_device, out_dir = setup.models, setup.device, setup.output
+        except (ValueError, OSError) as exc:
+            raise typer.BadParameter(str(exc)) from None
     if backend != "comfy3d" and workflow_file != DEFAULT_IMAGE_TO_GLB_WORKFLOW:
         raise typer.BadParameter("native backends use their own API graph; --workflow-file is legacy-only")
     if backend == "comfy3d":
@@ -1091,7 +1121,7 @@ def image_to_glb(
             if backend == "native-local":
                 if native_python is None or native_checkout is None:
                     raise ValueError("native-local requires --native-python and --native-checkout")
-                owner = LocalRuntime(native_python, native_checkout, native_runs, device=native_device, port=native_port, startup_timeout=native_startup_timeout)
+                owner = LocalRuntime(native_python, native_checkout, native_runs, device=native_device, models=native_models, port=native_port, startup_timeout=native_startup_timeout)
             else:
                 url = urlsplit(native_server)
                 if (url.scheme != "http" or url.hostname not in {"127.0.0.1", "::1"}

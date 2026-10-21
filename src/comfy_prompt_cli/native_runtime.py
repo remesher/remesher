@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 import socket
@@ -22,6 +23,7 @@ class LocalRuntime:
         runs: Path,
         *,
         device: str = "cuda",
+        models: Path | None = None,
         port: int = 0,
         startup_timeout: float = 120,
     ):
@@ -41,6 +43,9 @@ class LocalRuntime:
             )
         if not 0 <= port <= 65535 or startup_timeout <= 0:
             raise ValueError("invalid native port or startup timeout")
+        if models is not None and (not models.is_absolute() or not models.is_dir()):
+            raise ValueError("native models must be an absolute existing directory")
+        self.models = models
         self.python, self.checkout, self.runs = python, checkout, runs
         self.device, self.port, self.startup_timeout = device, port, startup_timeout
         self.process = None
@@ -80,6 +85,23 @@ class LocalRuntime:
         ]
         for name in ("input", "output", "user", "temp"):
             self.argv += [f"--{name}-directory", str(self.run_dir / name)]
+        if self.models is not None:
+            # JSON is a YAML subset: safe serialization for spaces/quotes/newlines.
+            model_config = self.run_dir / "models.yaml"
+            model_config.write_text(
+                json.dumps(
+                    {
+                        "remesher": {
+                            "base_path": str(self.models),
+                            "is_default": True,
+                            "diffusion_models": "diffusion_models",
+                            "vae": "vae",
+                            "clip_vision": "clip_vision",
+                        }
+                    }
+                )
+            )
+            self.argv += ["--extra-model-paths-config", str(model_config)]
         self.argv += ["--cpu"] if self.device == "cpu" else ["--cuda-device", "0"]
         self.base_url = f"http://127.0.0.1:{self.port}"
         try:

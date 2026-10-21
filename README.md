@@ -25,7 +25,12 @@ An agent harness that uses a small Typer CLI to submit ComfyUI API prompts, stre
 `image-to-glb --backend native` submits a native single-image TRELLIS.2/Pixal3D
 API graph to an existing loopback server. `--backend native-local` additionally
 launches and cleans up an owned local ComfyUI child using an explicitly supplied
-Python executable and checkout. Nothing is automatically installed or downloaded.
+Python executable and checkout. Nothing is implicitly installed or downloaded.
+Agents can explicitly configure a pinned TRELLIS runtime with JSON-producing
+`comfy-prompt-cli native-setup plan|check|apply`; installation and model downloads
+require separate opt-ins. Saved setup config feeds `image-to-glb --backend
+native-local --native-config /absolute/native-setup.json`. See the
+[setup CLI/plugin contract and acceptance task index](docs/native-setup.md).
 See [native backend usage and acceptance gates](docs/native-comfy-backend.md)
 for launcher arguments, workflow scope, model prerequisites and limitations.
 

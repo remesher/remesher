@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "comfy_revision": "7a28332047b6af638dc6c7f72ef3481a718769fd",
+  "comfy_repository": "https://github.com/Comfy-Org/ComfyUI.git",
+  "models": [
+    {"repo": "Comfy-Org/TRELLIS.2", "revision": "430a9d09b2416687018c8fe8edced2ad4858a439", "path": "diffusion_models/trellis_2_int8_convrot.safetensors", "size": 5253048192, "sha256": "d01952ad137213f6a868f86b6b877026276f84af5eec23069217475a0bad3a31"},
+    {"repo": "Comfy-Org/TRELLIS.2", "revision": "430a9d09b2416687018c8fe8edced2ad4858a439", "path": "vae/trellis_2_shape_vae_bf16.safetensors", "size": 1095844024, "sha256": "de0cb4949a76c59ee5c091a995a69bcc8c51d5aeda939f0c641a50d2a72341f4"},
+    {"repo": "Comfy-Org/TRELLIS.2", "revision": "430a9d09b2416687018c8fe8edced2ad4858a439", "path": "vae/trellis_2_texture_vae_bf16.safetensors", "size": 948461364, "sha256": "714e5ebf094a610e12a8e3b5175c18a62f37f6ea4218acb6073644456b73ab0e"},
+    {"repo": "Comfy-Org/Pixal3D", "revision": "f37641be376725d324c56626007cc477f1249a69", "path": "clip_vision/dino_v3_L_naf_fp32.safetensors", "size": 1215214176, "sha256": "4ad2ec4e0879a5b5b04cd97325cc37da954a7b6edca5170b86510f17f2b2290f"}
+  ]
+}
