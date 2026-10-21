@@ -32,6 +32,164 @@ class PluginTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
 
+    def test_native_config_uses_private_snapshot_without_conflicting_flags(self):
+        plugin, image = self.fixture("""
+import json
+config = json.loads(pathlib.Path(sys.argv[sys.argv.index("--native-config") + 1]).read_text())
+assert "--out-dir" not in sys.argv and "--native-python" not in sys.argv
+assert "--native-runs" not in sys.argv and "--native-device" not in sys.argv
+assert pathlib.Path(config["runs"]).parent == pathlib.Path.cwd()
+assert pathlib.Path(config["output"]) == pathlib.Path.cwd() / "output"
+(pathlib.Path(config["output"]) / "mesh.glb").write_bytes(struct.pack("<4sII", b"glTF", 2, 12))
+""")
+        original = {
+            "schema_version": 1,
+            "venv": "/runtime/venv",
+            "checkout": "/runtime/ComfyUI",
+            "models": "/runtime/models",
+            "runs": "/runtime/runs",
+            "output": "/runtime/output",
+            "device": "cuda",
+            "minimum_memory_gib": 32,
+        }
+        native = self.root / "native.json"
+        native.write_text(json.dumps(original))
+        config = self.root / "plugin.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "cli": os.environ["REMESHER_CLI"],
+                    "backend": "native-local",
+                    "native_config": str(native),
+                }
+            )
+        )
+        with patch.dict(os.environ, {"REMESHER_SETTINGS": str(config)}):
+            health = plugin.health({})
+            self.assertEqual(health["status"], "configured", health)
+            self.assertFalse(health["gpu_generation_verified"])
+            result = plugin.generate({"image": str(image), "timeout_seconds": 5})
+        self.assertEqual(result["status"], "queued", result)
+        final = self.wait_job(plugin, result["job_id"])
+        self.assertEqual(final["status"], "succeeded", final)
+        folder = Path(final["log_path"]).parent
+        snapshot = json.loads((folder / "native-setup.json").read_text())
+        self.assertEqual(json.loads(native.read_text()), original)
+        self.assertEqual(
+            snapshot,
+            {
+                **original,
+                "runs": str(folder / "native-runs"),
+                "output": str(folder / "output"),
+            },
+        )
+        self.assertEqual((folder / "native-setup.json").stat().st_mode & 0o777, 0o600)
+
+    def test_native_config_rejects_ambiguous_settings(self):
+        plugin, _ = self.fixture("pass\n")
+        native = self.root / "native.json"
+        native.write_text("{}")
+        base = {
+            "cli": os.environ["REMESHER_CLI"],
+            "backend": "native-local",
+            "native_config": str(native),
+        }
+        for extra in (
+            {"backend": "native"},
+            {"backend": "comfy3d", "config": str(native)},
+            {"native_python": "/usr/bin/python3"},
+            {"native_checkout": str(self.root)},
+            {"native_device": "cuda"},
+            {"native_model": "pixal3d"},
+            {"native_server": "http://127.0.0.1:8188"},
+        ):
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                plugin.validate_settings({**base, **extra})
+
+    def test_native_config_rejects_invalid_document_before_spawn(self):
+        plugin, image = self.fixture("pass\n")
+        valid = {
+            key: "/runtime/" + key
+            for key in ("venv", "checkout", "models", "runs", "output")
+        }
+        native = self.root / "native.json"
+        candidate = self.root / "candidate.json"
+        candidate.write_text(
+            json.dumps(
+                {
+                    "cli": os.environ["REMESHER_CLI"],
+                    "backend": "native-local",
+                    "native_config": str(native),
+                }
+            )
+        )
+        documents = [
+            "{",
+            "[]",
+            "{}",
+            json.dumps({**valid, "models": "relative"}),
+            json.dumps({**valid, "models": "/"}),
+            json.dumps({**valid, "models": "/x/../y"}),
+            json.dumps({**valid, "schema_version": 2}),
+            json.dumps({**valid, "extra": True}),
+            json.dumps({**valid, "device": "mps"}),
+            json.dumps({**valid, "minimum_memory_gib": 0}),
+            json.dumps({**valid, "models": valid["venv"]}),
+            json.dumps({**valid, "models": valid["venv"] + "/models"}),
+        ]
+        for index, document in enumerate(documents):
+            native.write_text(document)
+            with (
+                self.subTest(index=index),
+                patch.dict(os.environ, {"REMESHER_SETTINGS": str(candidate)}),
+                patch.object(plugin.subprocess, "Popen") as spawn,
+            ):
+                self.assertEqual(
+                    plugin.generate({"image": str(image)})["status"], "invalid_request"
+                )
+                spawn.assert_not_called()
+                self.assertEqual(plugin.health({})["status"], "unavailable")
+        native.write_text(json.dumps(valid))
+        with patch.dict(os.environ, {"REMESHER_SETTINGS": str(candidate)}):
+            self.assertEqual(plugin.health({})["status"], "configured")
+
+    def test_configure_script_accepts_native_config(self):
+        import subprocess
+
+        _plugin, _ = self.fixture("pass\n")
+        native = self.root / "native.json"
+        native.write_text(
+            json.dumps(
+                {
+                    key: "/runtime/" + key
+                    for key in ("venv", "checkout", "models", "runs", "output")
+                }
+            )
+        )
+        candidate = self.root / "candidate.json"
+        candidate.write_text(
+            json.dumps(
+                {
+                    "cli": os.environ["REMESHER_CLI"],
+                    "backend": "native-local",
+                    "native_config": str(native),
+                }
+            )
+        )
+        result = subprocess.run(
+            [
+                "/usr/bin/python3",
+                str(ROOT / "scripts" / "configure.py"),
+                "--input",
+                str(candidate),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(json.loads(result.stdout)["model_visibility_verified"])
+
     def test_native_local_structured_settings_and_argv(self):
         plugin, image = self.fixture("""
 assert "--config" not in sys.argv and "--workflow-file" not in sys.argv

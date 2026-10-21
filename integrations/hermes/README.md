@@ -18,6 +18,7 @@ arguments**. Obtain authorization before configuration writes or generation.
 | `comfy3d` (default) | `cli`, `config`, `workflow` | Existing ComfyUI/Comfy3D server; legacy CLI options unchanged |
 | `native` | `cli`; optional `native_server`, `native_model` | Existing numeric-loopback HTTP native ComfyUI server |
 | `native-local` | `cli`, `native_python`, `native_checkout`; optional `native_device`, `native_model` | CLI starts and owns a local ComfyUI child |
+| `native-local` with setup config | `cli`, `native_config` | Verified TRELLIS setup config, private job snapshot, owned local child |
 
 All file paths must be existing absolute paths. `cli` and `native_python` must
 be executable; `native_checkout` must contain `main.py`. Interpreter symlinks
@@ -90,18 +91,49 @@ restart that session after authorized environment changes. Neither script nor
 plugin edits `.env`, `config.yaml`, an installed plugin, or another profile.
 For updates, inspect and publish a new file rather than overwriting a live one.
 
-**Provisioning boundary:** the inspected native CLI contract at
-`829f821931ab2bee1df4655a241cd2fa77621bb3` has no native environment/model setup
-script. Do not invent a `native-setup` command or run legacy Comfy3D downloader
-scripts for native weights. Discover any subsequently shipped setup script and
-read its actual `--help`/source before invoking it with permission. This bundled
-script configures the **plugin only**, not Python packages, drivers or weights.
+### Verified native setup configuration (recommended)
+
+The combined PR18/PR19 CLI implements [native-setup](../../docs/native-setup.md).
+Use its actual JSON contract; do not use legacy Comfy3D downloaders:
+
+```sh
+comfy-prompt-cli native-setup plan --config /absolute/native-setup.json
+comfy-prompt-cli native-setup check --config /absolute/native-setup.json
+# Explicitly authorized reuse only: no installs or downloads without opt-ins.
+comfy-prompt-cli native-setup apply --config /absolute/native-setup.json
+```
+
+Check/apply must exit 0 with `ready=true` before generation. Configure the plugin:
+
+```json
+{
+  "cli": "/absolute/isolated-cli/bin/comfy-prompt-cli",
+  "backend": "native-local",
+  "native_config": "/absolute/native-setup.json"
+}
+```
+
+`REMESHER_NATIVE_CONFIG` is the equivalent scalar environment setting. Config
+mode supports TRELLIS only and rejects explicit interpreter, checkout, device
+or server settings. Health/configure inspect schema-v1 JSON and path structure,
+not dependency availability, hashes or memory; `configured` is not `ready`.
+The CLI rechecks full setup readiness before each launch, without downloads.
+Each job saves a 0600 `native-setup.json` snapshot with **only `runs` and `output`
+replaced by private job paths**. The original setup config remains unchanged.
+The CLI receives `--native-config`, not conflicting `--out-dir`/runtime flags.
+Its configured model root is passed to the owned child automatically. The
+plugin never changes cgroup limits or acknowledges low-memory risk for you.
+
+The input must already be background-removed and square-composited onto black.
+Neither the plugin nor the generation CLI automatically removes backgrounds.
+Keep original, mask and prepared image separately; protect hands/feet with
+padding. A valid GLB header is not a topology, anatomy or production-quality pass.
 
 **Model visibility:** cache environment variables are not ComfyUI model search
 paths. Put the native weights in the selected checkout's `models` directories,
 or configure that checkout's supported `extra_model_paths.yaml` separately with
-authorization. The CLI currently has no model-root/extra-model-path option. The
-required names are:
+authorization. Config mode passes its model root automatically; the standalone
+CLI also supports `--native-models` with explicit launcher paths. Required names:
 
 - `diffusion_models/trellis_2_int8_convrot.safetensors` or
   `diffusion_models/pixal3d_int8_convrot.safetensors`;

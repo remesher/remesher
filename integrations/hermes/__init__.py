@@ -358,8 +358,7 @@ def _generate(args):
             *backend_arguments(cfg, folder),
             "--image",
             str(source),
-            "--out-dir",
-            str(folder / "output"),
+            *([] if "native_config" in cfg else ["--out-dir", str(folder / "output")]),
             "--filename-prefix",
             "hermes_" + job_id,
             "--target-face-num",
@@ -408,6 +407,7 @@ SETTING_KEYS = {
     "config",
     "workflow",
     "native_python",
+    "native_config",
     "native_checkout",
     "native_device",
     "native_model",
@@ -428,6 +428,48 @@ def existing_path(value, label, *, executable=False, directory=False):
     return str(path)
 
 
+def read_native_config(filename):
+    """Dependency-free schema-v1 inspection; CLI still owns full readiness checks."""
+    config = json.loads(Path(filename).read_text())
+    keys = {"venv", "checkout", "models", "runs", "output"}
+    if not isinstance(config, dict) or not keys <= config.keys():
+        raise ValueError("native_config requires the five runtime paths")
+    if config.keys() - keys - {"schema_version", "device", "minimum_memory_gib"}:
+        raise ValueError("native_config contains unsupported keys")
+    if (
+        type(config.get("schema_version", 1)) is not int
+        or config.get("schema_version", 1) != 1
+    ):
+        raise ValueError("native_config requires schema_version 1")
+    if config.get("device", "cuda") not in ("cuda", "cpu"):
+        raise ValueError("native_config device must be cuda or cpu")
+    memory = config.get("minimum_memory_gib", 32)
+    if type(memory) is not int or not 1 <= memory <= 1024:
+        raise ValueError(
+            "native_config minimum_memory_gib must be an integer from 1 to 1024"
+        )
+    paths = {}
+    for key in keys:
+        value = config[key]
+        if not isinstance(value, str) or "\x00" in value:
+            raise ValueError("native_config paths must be strings without NUL")
+        path = Path(value)
+        if not path.is_absolute() or path == Path("/") or ".." in path.parts:
+            raise ValueError(
+                "native_config paths must be absolute non-root paths without '..'"
+            )
+        paths[key] = path
+    if len(set(paths.values())) != len(paths):
+        raise ValueError("native_config paths must be distinct")
+    venv = paths.pop("venv")
+    if any(
+        path.is_relative_to(venv) or venv.is_relative_to(path)
+        for path in paths.values()
+    ):
+        raise ValueError("native_config venv must not overlap other paths")
+    return config
+
+
 def validate_settings(raw):
     from urllib.parse import urlsplit
 
@@ -438,13 +480,30 @@ def validate_settings(raw):
     if cfg["backend"] not in ("comfy3d", "native", "native-local"):
         raise ValueError("backend must be comfy3d, native or native-local")
     cfg["cli"] = existing_path(cfg.get("cli"), "cli", executable=True)
+    if "native_config" in cfg:
+        if cfg["backend"] != "native-local":
+            raise ValueError("native_config requires native-local")
+        if cfg.keys() & {
+            "native_python",
+            "native_checkout",
+            "native_device",
+            "native_server",
+        }:
+            raise ValueError(
+                "native_config cannot be combined with explicit runtime settings"
+            )
+        if cfg.get("native_model", "trellis2") != "trellis2":
+            raise ValueError("native_config supports only trellis2")
     if cfg["backend"] == "comfy3d":
         cfg["config"] = existing_path(cfg.get("config"), "config")
     else:
         cfg.setdefault("native_model", "trellis2")
         if cfg["native_model"] not in ("trellis2", "pixal3d"):
             raise ValueError("native_model must be trellis2 or pixal3d")
-        if cfg["backend"] == "native-local":
+        if cfg["backend"] == "native-local" and "native_config" in cfg:
+            cfg["native_config"] = existing_path(cfg["native_config"], "native_config")
+            read_native_config(cfg["native_config"])
+        elif cfg["backend"] == "native-local":
             cfg["native_python"] = existing_path(
                 cfg.get("native_python"), "native_python", executable=True
             )
@@ -516,6 +575,16 @@ def backend_arguments(cfg, folder):
     argv = ["--backend", cfg["backend"], "--native-model", cfg["native_model"]]
     if cfg["backend"] == "native":
         return argv + ["--native-server", cfg["native_server"]]
+    if "native_config" in cfg:
+        # Snapshot configuration per job; never mutate the operator's config or
+        # mix its output/run roots with the plugin's artifact ownership boundary.
+        config = read_native_config(cfg["native_config"])
+        config.update(runs=str(folder / "native-runs"), output=str(folder / "output"))
+        snapshot = folder / "native-setup.json"
+        descriptor = os.open(snapshot, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w") as stream:
+            json.dump(config, stream, allow_nan=False)
+        return argv + ["--native-config", str(snapshot)]
     for name in ("native_python", "native_checkout", "native_device"):
         argv += ["--" + name.replace("_", "-"), cfg[name]]
     return argv + ["--native-runs", str(folder / "native-runs")]
@@ -552,9 +621,16 @@ def health(args):
                 "scope": "configuration_only",
                 "gpu_generation_verified": False,
                 "model_visibility_verified": False,
-                "native_python": cfg["native_python"],
-                "native_checkout": cfg["native_checkout"],
-                "native_device": cfg["native_device"],
+                **{
+                    key: cfg[key]
+                    for key in (
+                        "native_config",
+                        "native_python",
+                        "native_checkout",
+                        "native_device",
+                    )
+                    if key in cfg
+                },
                 "native_model": cfg["native_model"],
             }
         with tempfile.TemporaryDirectory(prefix="remesher-health-") as temporary:

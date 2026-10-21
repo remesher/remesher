@@ -33,7 +33,12 @@ def main():
             "gpu_generation_verified": False,
             "model_visibility_verified": False,
         }
-        if cfg["backend"] == "native-local":
+        if cfg["backend"] == "native-local" and "native_config" in cfg:
+            report["model_note"] = (
+                "Run the configured CLI native-setup check --config on native_config. "
+                "Configuration inspection does not verify setup or GPU readiness."
+            )
+        elif cfg["backend"] == "native-local":
             checkout = Path(cfg["native_checkout"])
             model = "trellis_2" if cfg["native_model"] == "trellis2" else "pixal3d"
             names = [

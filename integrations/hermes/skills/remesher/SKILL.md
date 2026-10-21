@@ -14,12 +14,14 @@ description: Configure and inspect Remesher setup, generate GLBs from local imag
 2. Choose `comfy3d` (default existing Comfy3D server), `native` (existing numeric
    loopback native ComfyUI server), or `native-local` (CLI-owned local child).
    Native modes require the native CLI implementation; legacy config/workflow
-   are unnecessary. Native-local requires absolute `native_python` (preserve
-   venv symlinks) and `native_checkout` containing `main.py`.
+   are unnecessary. Prefer native-local with `native_config` pointing to an
+   approved schema-v1 setup config. Alternatively use absolute `native_python`
+   (preserve venv symlinks) and `native_checkout` containing `main.py`.
 3. With user authorization, write a **candidate JSON file**, using the README
    schema: `cli`, `backend`, backend-specific settings and optional allowlisted
-   `environment`. For native-local, set `native_device` to `cuda` or `cpu` and
-   `native_model` to `trellis2` or `pixal3d`. Never insert shell strings or extra
+   `environment`. Config mode supports TRELLIS only; do not mix `native_config`
+   with explicit runtime paths/device/server. For manual native-local, set
+   `native_device` to `cuda` or `cpu`. Never insert shell strings or extra
    arguments. Device/cache variables must be explicit in `environment`; ambient
    CUDA/HF/Torch variables are scrubbed along with Python/uv activation and tokens.
 4. Run `python <plugin>/scripts/configure.py --input <candidate.json>` for
@@ -32,13 +34,15 @@ description: Configure and inspect Remesher setup, generate GLBs from local imag
    Existing files/symlinks are refused. Set `REMESHER_SETTINGS` in the intended
    Hermes process environment and start a fresh session after authorized changes.
    The script never edits profile config, `.env`, dependencies or installation.
-6. Provisioning is a separate boundary: the checked native CLI revision
-   `829f821931ab2bee1df4655a241cd2fa77621bb3` has no native setup/download script.
-   Do not invent one or use the legacy Comfy3D downloader for native weights.
-   If a newer checkout ships a setup script, discover and read its source/help
-   and get permission for its actual side effects before use. The bundled
-   `scripts/configure.py` configures **this plugin only**. Verify native graph/model
-   enumerations on the selected server; file existence alone is insufficient.
+6. Read the actual CLI `docs/native-setup.md` contract. Run JSON `native-setup
+   plan --config <path>`, then `check`; explicitly authorized `apply` without
+   install/download opt-ins reuses existing resources. Require exit 0 and
+   `ready=true` from check/apply. Never use legacy Comfy3D downloaders for native
+   weights or silently acknowledge low-memory risk. Apply approved bounded
+   resource changes separately, never to unrelated services. Configuration
+   inspection is not GPU acceptance. The plugin snapshots setup JSON per job,
+   replacing only runs/output with private job paths. CLI readiness is rechecked
+   before launch and configured model paths reach the owned child automatically.
 
 ## Generation and delivery
 
@@ -46,6 +50,9 @@ description: Configure and inspect Remesher setup, generate GLBs from local imag
    only. Native-local returns `configured` without starting a server, and explicitly
    leaves model/GPU readiness unverified. Never describe either as GPU certification.
 2. Ensure the user authorized the image upload/local server startup and GPU usage.
+   Native input must already be foreground-masked and square-composited on black;
+   the plugin/CLI do not remove backgrounds. Preserve source/mask/prepared images
+   and pad enough to retain hands/feet. Do not mistake gray clothing for background.
    Call `remesher_generate` once with absolute PNG/JPEG/WebP `image` (max 20 MiB).
    Optional `timeout_seconds`: 1–1800, default 900; `target_face_num`: 1000–200000,
    default 80000. Save the returned job_id. Backend and paths are setup settings,

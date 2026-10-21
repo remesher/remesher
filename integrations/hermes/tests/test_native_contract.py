@@ -57,6 +57,38 @@ server.serve_forever()
     "Set REMESHER_TEST_NATIVE_CLI to exercise native CLI",
 )
 class NativeCLIContract(unittest.TestCase):
+    def test_native_config_snapshot_matches_real_cli_plan(self):
+        cli = os.environ["REMESHER_TEST_NATIVE_CLI"]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            native = root / "native.json"
+            config = {
+                key: str(root / key)
+                for key in ("venv", "checkout", "models", "runs", "output")
+            }
+            native.write_text(json.dumps(config))
+            plugin = load_plugin()
+            cfg = plugin.validate_settings(
+                {"cli": cli, "backend": "native-local", "native_config": str(native)}
+            )
+            folder = root / "job"
+            folder.mkdir()
+            argv = plugin.backend_arguments(cfg, folder)
+            snapshot = argv[argv.index("--native-config") + 1]
+            result = subprocess.run(
+                [cli, "native-setup", "plan", "--config", snapshot],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=15,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            report = json.loads(result.stdout)
+            self.assertEqual(report["config"]["output"], str(folder / "output"))
+            self.assertEqual(report["config"]["models"], config["models"])
+            self.assertEqual(len(report["models"]), 4)
+            self.assertFalse((folder / "output").exists(), "plan must be read-only")
+
     def exercise(self, backend, stall=False):
         cli = os.environ["REMESHER_TEST_NATIVE_CLI"]
         python = os.environ.get(
