@@ -32,6 +32,19 @@ class PluginTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
 
+    def test_state_sync_failure_preserves_previous_receipt(self):
+        plugin = load_plugin()
+        plugin.save_state(self.root, {"status": "queued"})
+        with (
+            patch.object(plugin.os, "fsync", side_effect=OSError("disk unavailable")),
+            self.assertRaises(OSError),
+        ):
+            plugin.save_state(self.root, {"status": "succeeded"})
+        self.assertEqual(
+            json.loads((self.root / "state.json").read_text()), {"status": "queued"}
+        )
+        self.assertEqual(list(self.root.glob(".state-*")), [])
+
     def test_health_uses_explicit_cli_and_scrubs_python_environment(self):
         self.assertTrue(
             (ROOT / "__init__.py").exists(), "native plugin entrypoint missing"
@@ -111,6 +124,50 @@ out.mkdir(exist_ok=True)
         self.assertEqual(len(assets["assets"]), 1)
         self.assertTrue(Path(assets["assets"][0]["path"]).is_file())
         self.assertEqual(assets["assets"][0]["size_bytes"], 12)
+
+    def test_manifest_order_does_not_change_integrity(self):
+        plugin, _ = self.fixture("pass\n")
+        folder = plugin.data_root() / "jobs" / ("d" * 32)
+        (folder / "output").mkdir(parents=True)
+        for name in ("first.glb", "second.glb"):
+            (folder / "output" / name).write_bytes(struct.pack("<4sII", b"glTF", 2, 12))
+        manifest = plugin.collect_assets(folder)
+        plugin.save_state(
+            folder, {"status": "succeeded", "assets": list(reversed(manifest))}
+        )
+        self.assertEqual(plugin.job({"job_id": folder.name})["status"], "succeeded")
+
+    def test_success_reads_revalidate_manifest_after_restart(self):
+        plugin, image = self.fixture(
+            'out = pathlib.Path(sys.argv[sys.argv.index("--out-dir") + 1]); (out / "mesh.glb").write_bytes(struct.pack("<4sII", b"glTF", 2, 16) + b"data")\n'
+        )
+        result = plugin.generate({"image": str(image), "timeout_seconds": 5})
+        final = self.wait_job(plugin, result["job_id"])
+        self.assertEqual(final["status"], "succeeded")
+        path = Path(final["assets"][0]["path"])
+        original = path.read_bytes()
+        reloaded = load_plugin()
+        reloaded.data_root = plugin.data_root
+        for mutation in ("changed", "deleted", "symlink"):
+            with self.subTest(mutation=mutation):
+                path.unlink(missing_ok=True)
+                if mutation == "changed":
+                    path.write_bytes(original[:-4] + b"oops")
+                elif mutation == "symlink":
+                    outside = self.root / "outside.glb"
+                    outside.write_bytes(original)
+                    path.symlink_to(outside)
+                observed = reloaded.job({"job_id": result["job_id"]})
+                self.assertEqual(observed["status"], "integrity_error")
+                self.assertEqual(observed["assets"], [])
+                self.assertEqual(
+                    reloaded.assets({"job_id": result["job_id"]})["assets"], []
+                )
+        path.unlink(missing_ok=True)
+        path.write_bytes(original)
+        self.assertEqual(
+            reloaded.job({"job_id": result["job_id"]})["status"], "succeeded"
+        )
 
     def test_admission_is_bounded_to_one_active_job(self):
         plugin, image = self.fixture("time.sleep(0.4)\n")
@@ -228,6 +285,17 @@ out.mkdir(exist_ok=True)
         self.assertEqual(result["status"], "timed_out")
         self.assertEqual(runner.call_args.args[2], 25)
 
+    def test_asset_collection_rejects_symlinked_output_directory(self):
+        plugin, _ = self.fixture("pass\n")
+        folder = self.root / "job"
+        folder.mkdir()
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "mesh.glb").write_bytes(struct.pack("<4sII", b"glTF", 2, 12))
+        (folder / "output").symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(ValueError):
+            plugin.collect_assets(folder)
+
     def test_asset_inspection_rejects_excessive_files(self):
         plugin, _ = self.fixture("pass\n")
         folder = self.root / "assets"
@@ -239,12 +307,150 @@ out.mkdir(exist_ok=True)
         with self.assertRaises(ValueError):
             plugin.collect_assets(folder)
 
+    def test_nonfinite_and_boolean_deadlines_fail_closed(self):
+        plugin, _ = self.fixture("pass\n")
+        folder = plugin.data_root() / "jobs" / ("c" * 32)
+        folder.mkdir(parents=True)
+        for deadline in (float("nan"), float("inf"), True):
+            with self.subTest(deadline=str(deadline)):
+                (folder / "state.json").write_text(
+                    json.dumps({"status": "queued", "deadline": deadline})
+                )
+                self.assertEqual(
+                    plugin.job({"job_id": folder.name})["status"], "unavailable"
+                )
+
     def test_corrupt_store_returns_structured_unavailable(self):
         plugin, _ = self.fixture("pass\n")
         folder = plugin.data_root() / "jobs" / ("b" * 32)
         folder.mkdir(parents=True)
         (folder / "state.json").write_text("[]")
         self.assertEqual(plugin.job({"job_id": folder.name})["status"], "unavailable")
+
+    def test_worker_syncs_artifact_before_success_receipt(self):
+        import stat
+
+        plugin, _ = self.fixture("pass\n")
+        folder = self.root / "sync-job"
+        (folder / "output").mkdir(parents=True)
+        artifact = folder / "output" / "mesh.glb"
+        artifact.write_bytes(struct.pack("<4sII", b"glTF", 2, 12))
+        plugin.save_state(
+            folder,
+            {"job_id": "a" * 32, "status": "queued", "deadline": time.time() + 5},
+        )
+        (folder / "request.json").write_text(
+            json.dumps({"argv": ["unused"], "env": {}})
+        )
+        events = []
+        real_sync, real_save = plugin.os.fsync, plugin.save_state
+
+        def sync(fd):
+            info = os.fstat(fd)
+            if info.st_ino == artifact.stat().st_ino and stat.S_ISREG(info.st_mode):
+                events.append("artifact")
+            real_sync(fd)
+
+        def save(folder, state):
+            events.append(state["status"])
+            real_save(folder, state)
+
+        with (
+            patch.object(plugin.os, "fsync", side_effect=sync),
+            patch.object(plugin, "save_state", side_effect=save),
+            patch.object(plugin, "run_cli", return_value=(0, False)),
+        ):
+            plugin.worker(folder)
+        self.assertIn("artifact", events)
+        self.assertLess(events.index("artifact"), events.index("succeeded"))
+
+    def test_deadline_during_running_receipt_prevents_submission(self):
+        plugin, _ = self.fixture("pass\n")
+        folder = self.root / "delayed-receipt"
+        folder.mkdir()
+        plugin.save_state(
+            folder,
+            {"job_id": "a" * 32, "status": "queued", "deadline": time.time() + 0.1},
+        )
+        (folder / "request.json").write_text(json.dumps({"argv": ["never"], "env": {}}))
+        real_save = plugin.save_state
+
+        def slow_save(folder, state):
+            real_save(folder, state)
+            if state["status"] == "running":
+                time.sleep(0.2)
+
+        with (
+            patch.object(plugin, "save_state", side_effect=slow_save),
+            patch.object(plugin, "run_cli", return_value=(0, False)) as run,
+        ):
+            plugin.worker(folder)
+        run.assert_not_called()
+        self.assertEqual(plugin.read_state(folder)["status"], "timed_out")
+
+    def test_worker_rejects_success_after_inspection_deadline(self):
+        plugin, _ = self.fixture("pass\n")
+        folder = self.root / "late-result"
+        folder.mkdir()
+        plugin.save_state(
+            folder,
+            {"job_id": "a" * 32, "status": "queued", "deadline": time.time() + 0.1},
+        )
+        (folder / "request.json").write_text(
+            json.dumps({"argv": ["unused"], "env": {}})
+        )
+
+        def slow_inspection(*args, **kwargs):
+            time.sleep(0.2)
+            return [{"path": "unverified"}]
+
+        with (
+            patch.object(plugin, "run_cli", return_value=(0, False)),
+            patch.object(plugin, "collect_assets", side_effect=slow_inspection),
+        ):
+            plugin.worker(folder)
+        state = plugin.read_state(folder)
+        self.assertEqual(state["status"], "timed_out")
+        self.assertEqual(state["assets"], [])
+        self.assertIn("remote", state["error"])
+
+    def test_worker_lock_excludes_concurrent_supervisor(self):
+        import fcntl
+
+        plugin, _ = self.fixture("pass\n")
+        folder = self.root / "locked-worker"
+        folder.mkdir()
+        original = {"status": "queued", "deadline": time.time() + 5}
+        plugin.save_state(folder, original)
+        with (folder / ".worker.lock").open("a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            with patch.object(plugin, "_worker_locked") as run:
+                plugin.worker(folder)
+            run.assert_not_called()
+            self.assertEqual(plugin.read_state(folder), original)
+        with patch.object(plugin, "_worker_locked") as run:
+            plugin.worker(folder)
+        run.assert_called_once()
+
+    def test_worker_never_replays_running_or_terminal_jobs(self):
+        plugin, _ = self.fixture("pass\n")
+        folder = self.root / "replay"
+        folder.mkdir()
+        (folder / "request.json").write_text(json.dumps({"argv": ["never"], "env": {}}))
+        for status in ("running", "succeeded", "failed", "timed_out", "interrupted"):
+            with self.subTest(status=status):
+                original = {
+                    "job_id": "a" * 32,
+                    "status": status,
+                    "deadline": time.time() + 10,
+                }
+                plugin.save_state(folder, original)
+                with patch.object(plugin, "run_cli", return_value=(0, False)) as run:
+                    plugin.worker(folder)
+                run.assert_not_called()
+                self.assertEqual(
+                    json.loads((folder / "state.json").read_text()), original
+                )
 
     def test_delayed_worker_does_not_submit_after_deadline(self):
         plugin, _ = self.fixture("pass\n")

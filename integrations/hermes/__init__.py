@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import math
 import os
 import re
 import selectors
@@ -23,20 +24,33 @@ def data_root():
 
 def save_state(folder, state):
     temporary = folder / (".state-" + uuid.uuid4().hex)
-    temporary.write_text(json.dumps(state, indent=2))
-    temporary.replace(folder / "state.json")
+    try:
+        with temporary.open("x", encoding="utf-8") as stream:
+            json.dump(state, stream, indent=2, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(folder / "state.json")
+        descriptor = os.open(folder, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
-def read_state(folder):
+def read_state(folder, *, observe_deadline=True):
     state = json.loads((folder / "state.json").read_text())
     if not isinstance(state, dict) or not isinstance(state.get("status"), str):
         raise TypeError("Malformed job state")
-    if state["status"] in ("queued", "running") and not isinstance(
-        state.get("deadline"), (int, float)
+    if state["status"] in ("queued", "running") and (
+        type(state.get("deadline")) not in (int, float)
+        or not math.isfinite(state["deadline"])
     ):
         raise ValueError("Malformed job deadline")
     if (
-        state["status"] in ("queued", "running")
+        observe_deadline
+        and state["status"] in ("queued", "running")
         and time.time() > state["deadline"] + 30
     ):
         state.update(
@@ -54,7 +68,27 @@ def job(args):
             "error": "job_id must be 32 lowercase hex characters",
         }
     try:
-        return read_state(data_root() / "jobs" / job_id)
+        folder = data_root() / "jobs" / job_id
+        state = read_state(folder)
+        if state["status"] == "succeeded":
+            try:
+                actual = collect_assets(folder)
+                expected = state.get("assets")
+                if (
+                    not actual
+                    or not isinstance(expected, list)
+                    or sorted(actual, key=lambda item: item["path"])
+                    != sorted(expected, key=lambda item: item["path"])
+                ):
+                    raise ValueError("Artifact manifest mismatch")
+            except (OSError, ValueError, KeyError, TypeError):
+                # Keep the original receipt intact: this is a current observation.
+                state.update(
+                    status="integrity_error",
+                    assets=[],
+                    error="Saved artifacts are missing, changed, or unreadable",
+                )
+        return state
     except FileNotFoundError:
         return {"status": "not_found", "job_id": job_id}
     except (OSError, ValueError, KeyError, TypeError):
@@ -123,10 +157,15 @@ def run_cli(argv, folder, timeout, env):
         return process.returncode, timed_out
 
 
-def collect_assets(folder):
+def collect_assets(folder, *, deadline=None, durable=False):
     found = []
     total_size = 0
-    for index, path in enumerate((folder / "output").glob("*.glb")):
+    output = folder / "output"
+    if output.is_symlink():
+        raise ValueError("Artifact directory must not be a symlink")
+    for index, path in enumerate(output.glob("*.glb")):
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError("Artifact inspection deadline")
         if index >= 16:
             raise ValueError("Too many GLB artifacts (maximum 16)")
         if path.is_symlink() or not path.is_file():
@@ -145,7 +184,11 @@ def collect_assets(folder):
                 continue
             digest = hashlib.sha256(header)
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise TimeoutError("Artifact inspection deadline")
                 digest.update(chunk)
+            if durable:
+                os.fsync(stream.fileno())
         found.append(
             {
                 "path": str(path),
@@ -155,11 +198,32 @@ def collect_assets(folder):
                 "validation": "glb_header_only",
             }
         )
+    if durable:
+        descriptor = os.open(output, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
     return found
 
 
 def worker(folder):
-    state = read_state(folder)
+    import fcntl
+
+    with (folder / ".worker.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return
+        state = read_state(folder, observe_deadline=False)
+        # A running receipt is ambiguous after a supervisor crash. Never replay.
+        if state["status"] != "queued":
+            return
+        _worker_locked(folder, state)
+
+
+def _worker_locked(folder, state):
+    deadline = time.monotonic() + max(0, state["deadline"] - time.time())
     if time.time() >= state["deadline"]:
         state.update(
             status="timed_out",
@@ -172,16 +236,22 @@ def worker(folder):
     state["status"] = "running"
     save_state(folder, state)
     try:
+        if time.monotonic() >= deadline:
+            raise TimeoutError("Local deadline expired before CLI launch")
         code, timed_out = run_cli(
             request["argv"],
             folder,
-            max(0.001, state["deadline"] - time.time()),
+            max(0.001, deadline - time.monotonic()),
             request["env"],
         )
         state["returncode"] = code
-        state["status"] = "timed_out" if timed_out else "failed"
-        if not timed_out and code == 0:
-            state["assets"] = collect_assets(folder)
+        if timed_out or time.monotonic() >= deadline:
+            raise TimeoutError("Local execution deadline")
+        state["status"] = "failed"
+        if code == 0:
+            state["assets"] = collect_assets(folder, deadline=deadline, durable=True)
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Artifact inspection deadline")
             state["status"] = "succeeded" if state["assets"] else "failed"
             if not state["assets"]:
                 state["error"] = "CLI returned no valid GLB header"
@@ -189,6 +259,12 @@ def worker(folder):
             state.setdefault(
                 "error", "CLI failed or local deadline expired; inspect cli.log"
             )
+    except TimeoutError:
+        state.update(
+            status="timed_out",
+            assets=[],
+            error="Local deadline expired; remote execution may still be active",
+        )
     except (OSError, ValueError) as exc:
         state.update(
             status="failed", error=type(exc).__name__ + ": local worker failure"

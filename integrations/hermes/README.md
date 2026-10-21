@@ -74,6 +74,8 @@ so health can explain setup and existing artifacts remain discoverable by ID.
   finalize is reported `interrupted` after its deadline plus 30 seconds. This is
   an observation, not proof the backend stopped. Failed worker launch persists
   `failed`; a delayed worker will not submit after its deadline.
+  Workers take a per-job lock and only consume `queued` receipts; launching a
+  second supervisor or restarting one never replays a running/terminal request.
 - One active local job per profile, guarded by an interprocess admission lock.
   There is no automatic retry or cross-profile/server-wide scheduler.
 - A separate stdlib supervisor survives normal Hermes exit and enforces the CLI
@@ -83,6 +85,9 @@ so health can explain setup and existing artifacts remain discoverable by ID.
 - The input is copied into a private job directory (extension PNG/JPEG/WebP,
   maximum 20 MiB); decoding remains the backend's responsibility. All local CLI
   process-group members are killed at deadline. Health has a 25-second bound.
+  The same monotonic budget includes artifact hashing/sync before success;
+  overdue inspection results are discarded. Filesystem calls and final state
+  publication can stall in the kernel, so this is not a hard realtime guarantee.
 - **Local timeout is not remote cancellation.** ComfyUI may still be running a
   submitted prompt. Inspect its queue/history before retrying. This first slice
   does not parse the human CLI log into a reliable remote prompt ID, provide a
@@ -90,13 +95,20 @@ so health can explain setup and existing artifacts remain discoverable by ID.
 - State, request metadata, input, output, and a capped 1 MiB diagnostic log live
   under `plugin_data_dir("remesher")/jobs/<job_id>/`. This follows `HERMES_HOME`,
   survives plugin updates, and never uses the plugin source directory for data.
-  State replacement is atomic. Keep your job IDs; there is no job-list tool yet.
+  State replacement is atomic with file and directory fsync. Artifact files and
+  their output directory are synced before publishing success. This relies on
+  the local filesystem honoring fsync, not a distributed transaction or a host
+  crash recovery guarantee. Keep your job IDs; there is no job-list tool yet.
 - Success requires CLI exit zero and at least one `.glb` with matching magic,
   version 2, and declared length. Inspection accepts at most 16 files / 512 MiB
   combined. This is **header validation**, not full glTF validation, nonempty
   geometry, rendering, rigging quality, or proof that a GPU generated the bytes.
-  The asset response is a saved manifest; external deletion/modification is not
-  revalidated on every read.
+  Both read tools rehash successful outputs and compare with the saved manifest.
+  Missing, modified, symlinked, or unreadable artifacts yield `integrity_error`
+  with no assets. The original receipt is preserved, not overwritten by this
+  observation. This does not prevent mutation after a read; verify the hash when
+  consuming an artifact. The private store and operator are trusted, not an
+  adversarial concurrent filesystem sandbox.
 - The CLI's downloads are not filesystem-quota sandboxed. Use a trusted server
   and storage quota if needed; the inspection cap is not a download-size cap.
   Logs may contain private server details; they are not returned automatically.

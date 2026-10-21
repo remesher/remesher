@@ -17,10 +17,16 @@ description: Generate a GLB from a local image with the Remesher tools, inspect 
    A second concurrent local submission returns `busy` rather than queueing.
 5. On success, call `remesher_assets` and report the actual artifact path and hash.
    Validation checks the GLB header only; it does not prove mesh quality or rendering.
+   Both read tools rehash artifacts. `integrity_error` means the saved output is
+   missing, changed, symlinked, or unreadable: do not deliver stale paths or claim
+   success. Preserve the original receipt for investigation; do not regenerate
+   automatically. Verify the hash again when consuming the artifact.
 
 A local timeout or interrupted worker does **not** cancel the server-side ComfyUI
 prompt. Do not blindly retry: inspect the configured server queue/history first.
 The supervisor may continue after Hermes exits, up to the submitted deadline.
+Never restart a running/terminal worker to retry it: only a queued receipt may
+be consumed. Inspection shares the CLI deadline; overdue bytes are not success.
 The first slice intentionally has no cancel, rigging, text generation, desktop
 viewer, native local inference backend, or MCP surface.
 
