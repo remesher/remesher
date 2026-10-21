@@ -147,6 +147,20 @@ def run_cli(argv, folder, timeout, env):
                     except subprocess.TimeoutExpired:
                         timed_out = True
         finally:
+            # native-local owns a separate server session. Give its SIGTERM
+            # handler time to reap that session before forcibly killing the CLI.
+            if (
+                any(
+                    argv[i : i + 2] == ["--backend", "native-local"]
+                    for i in range(len(argv) - 1)
+                )
+                and process.poll() is None
+            ):
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    process.wait(timeout=12)
+                except (ProcessLookupError, subprocess.TimeoutExpired):
+                    pass
             # Also reap descendants retaining pipes or outliving the CLI parent.
             try:
                 os.killpg(process.pid, signal.SIGKILL)
@@ -311,11 +325,8 @@ def _generate(args):
             raise ValueError("image must be an existing absolute PNG/JPEG/WebP file")
         if image.stat().st_size > 20 * 1024 * 1024:
             raise ValueError("image exceeds 20 MiB")
-        workflow = Path(os.environ.get("REMESHER_WORKFLOW", ""))
-        if not workflow.is_absolute() or not workflow.is_file():
-            raise ValueError(
-                "Set REMESHER_WORKFLOW to an existing absolute workflow JSON file"
-            )
+        if cfg["backend"] == "comfy3d":
+            cfg["workflow"] = existing_path(cfg.get("workflow", ""), "workflow")
         timeout = args.get("timeout_seconds", 900)
         faces = args.get("target_face_num", 80000)
         if type(timeout) is not int or not 1 <= timeout <= 1800:
@@ -339,14 +350,12 @@ def _generate(args):
             "assets": [],
             "log_path": str(folder / "cli.log"),
             "remote_cancellation_supported": False,
+            "backend": cfg["backend"],
         }
         argv = [
             cfg["cli"],
             "image-to-glb",
-            "--config",
-            cfg["config"],
-            "--workflow-file",
-            str(workflow.resolve()),
+            *backend_arguments(cfg, folder),
             "--image",
             str(source),
             "--out-dir",
@@ -359,7 +368,7 @@ def _generate(args):
             str(timeout),
         ]
         (folder / "request.json").write_text(
-            json.dumps({"argv": argv, "env": cli_environment()})
+            json.dumps({"argv": argv, "env": cli_environment(cfg)})
         )
         save_state(folder, state)
         child = subprocess.Popen(
@@ -384,29 +393,145 @@ def _generate(args):
         return {"status": "invalid_request", "error": str(exc)}
 
 
-def settings():
-    result = {}
-    for key in ("CLI", "CONFIG"):
-        value = os.environ.get("REMESHER_" + key, "")
-        path = Path(value)
-        if not value or not path.is_absolute() or not path.is_file():
-            raise ValueError(
-                "Set REMESHER_" + key + " to an existing absolute file path"
+ENVIRONMENT_KEYS = {
+    "CUDA_VISIBLE_DEVICES",
+    "HF_HOME",
+    "HF_HUB_CACHE",
+    "TORCH_HOME",
+    "XDG_CACHE_HOME",
+    "LD_LIBRARY_PATH",
+    "PYTORCH_CUDA_ALLOC_CONF",
+}
+SETTING_KEYS = {
+    "cli",
+    "backend",
+    "config",
+    "workflow",
+    "native_python",
+    "native_checkout",
+    "native_device",
+    "native_model",
+    "native_server",
+    "environment",
+}
+
+
+def existing_path(value, label, *, executable=False, directory=False):
+    if not isinstance(value, str) or not value or "\x00" in value:
+        raise ValueError(f"{label} must be an existing absolute path")
+    path = Path(value)
+    if not path.is_absolute() or not (path.is_dir() if directory else path.is_file()):
+        raise ValueError(f"{label} must be an existing absolute path")
+    if executable and not os.access(path, os.X_OK):
+        raise ValueError(f"{label} must be executable")
+    # Do NOT resolve interpreter symlinks: venv identity depends on the invoked path.
+    return str(path)
+
+
+def validate_settings(raw):
+    from urllib.parse import urlsplit
+
+    if not isinstance(raw, dict) or raw.keys() - SETTING_KEYS:
+        raise ValueError("Settings must be an object with only documented keys")
+    cfg = dict(raw)
+    cfg.setdefault("backend", "comfy3d")
+    if cfg["backend"] not in ("comfy3d", "native", "native-local"):
+        raise ValueError("backend must be comfy3d, native or native-local")
+    cfg["cli"] = existing_path(cfg.get("cli"), "cli", executable=True)
+    if cfg["backend"] == "comfy3d":
+        cfg["config"] = existing_path(cfg.get("config"), "config")
+    else:
+        cfg.setdefault("native_model", "trellis2")
+        if cfg["native_model"] not in ("trellis2", "pixal3d"):
+            raise ValueError("native_model must be trellis2 or pixal3d")
+        if cfg["backend"] == "native-local":
+            cfg["native_python"] = existing_path(
+                cfg.get("native_python"), "native_python", executable=True
             )
-        result[key.lower()] = str(path.resolve())
-    if not os.access(result["cli"], os.X_OK):
-        raise ValueError("REMESHER_CLI must be executable")
-    return result
+            cfg["native_checkout"] = existing_path(
+                cfg.get("native_checkout"), "native_checkout", directory=True
+            )
+            existing_path(
+                str(Path(cfg["native_checkout"]) / "main.py"), "native_checkout/main.py"
+            )
+            cfg.setdefault("native_device", "cuda")
+            if cfg["native_device"] not in ("cuda", "cpu"):
+                raise ValueError("native_device must be cuda or cpu")
+        else:
+            cfg.setdefault("native_server", "http://127.0.0.1:8188")
+            server = cfg["native_server"]
+            if not isinstance(server, str) or any(
+                c.isspace() or ord(c) < 32 for c in server
+            ):
+                raise ValueError("native_server must be a numeric loopback HTTP origin")
+            url = urlsplit(server)
+            if (
+                url.scheme != "http"
+                or url.hostname not in ("127.0.0.1", "::1")
+                or url.username is not None
+                or url.password is not None
+                or url.path not in ("", "/")
+                or url.query
+                or url.fragment
+                or (url.port is not None and not 1 <= url.port <= 65535)
+            ):
+                raise ValueError("native_server must be a numeric loopback HTTP origin")
+    environment = cfg.setdefault("environment", {})
+    if not isinstance(environment, dict) or environment.keys() - ENVIRONMENT_KEYS:
+        raise ValueError("environment contains unsupported keys")
+    for key, value in environment.items():
+        if not isinstance(value, str) or "\x00" in value or "\n" in value:
+            raise ValueError("environment values must be single-line strings")
+        if key in {
+            "HF_HOME",
+            "HF_HUB_CACHE",
+            "TORCH_HOME",
+            "XDG_CACHE_HOME",
+            "LD_LIBRARY_PATH",
+        }:
+            paths = value.split(":") if key == "LD_LIBRARY_PATH" else [value]
+            if any(not p or not Path(p).is_absolute() for p in paths):
+                raise ValueError("cache/library environment paths must be absolute")
+    return cfg
 
 
-def cli_environment():
-    # Do not leak Hermes credentials, Python import paths or uv activation into the CLI.
-    return {
+def settings():
+    filename = os.environ.get("REMESHER_SETTINGS")
+    if filename:
+        path = existing_path(filename, "REMESHER_SETTINGS")
+        return validate_settings(json.loads(Path(path).read_text()))
+    return validate_settings(
+        {
+            key: os.environ["REMESHER_" + key.upper()]
+            for key in SETTING_KEYS - {"environment"}
+            if "REMESHER_" + key.upper() in os.environ
+        }
+    )
+
+
+def backend_arguments(cfg, folder):
+    if cfg["backend"] == "comfy3d":
+        # Preserve compatibility with legacy CLIs that predate --backend.
+        return ["--config", cfg["config"], "--workflow-file", cfg["workflow"]]
+    argv = ["--backend", cfg["backend"], "--native-model", cfg["native_model"]]
+    if cfg["backend"] == "native":
+        return argv + ["--native-server", cfg["native_server"]]
+    for name in ("native_python", "native_checkout", "native_device"):
+        argv += ["--" + name.replace("_", "-"), cfg[name]]
+    return argv + ["--native-runs", str(folder / "native-runs")]
+
+
+def cli_environment(cfg=None):
+    # Native cache/device/library settings are explicit, never ambient secrets or activation.
+    env = {
         k: v
         for k, v in os.environ.items()
         if k
         in {"PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "SSL_CERT_FILE", "SSL_CERT_DIR"}
     }
+    if cfg is not None:
+        env.update(cfg["environment"])
+    return env
 
 
 def health(args):
@@ -420,14 +545,34 @@ def health(args):
 
     try:
         cfg = settings()
+        if cfg["backend"] == "native-local":
+            return {
+                "status": "configured",
+                "backend": cfg["backend"],
+                "scope": "configuration_only",
+                "gpu_generation_verified": False,
+                "model_visibility_verified": False,
+                "native_python": cfg["native_python"],
+                "native_checkout": cfg["native_checkout"],
+                "native_device": cfg["native_device"],
+                "native_model": cfg["native_model"],
+            }
         with tempfile.TemporaryDirectory(prefix="remesher-health-") as temporary:
+            config = cfg.get("config")
+            if cfg["backend"] == "native":
+                config = str(Path(temporary) / "config.json")
+                Path(config).write_text(
+                    json.dumps({"server_url": cfg["native_server"]})
+                )
             code, timed_out = run_cli(
-                [cfg["cli"], "health", "--config", cfg["config"]],
+                [cfg["cli"], "health", "--config", config],
                 Path(temporary),
                 25,
-                cli_environment(),
+                cli_environment(cfg),
             )
         return {
+            "backend": cfg["backend"],
+            "scope": "connectivity_only",
             "status": "timed_out"
             if timed_out
             else "healthy"
@@ -450,14 +595,14 @@ def register(ctx):
         (
             "remesher_health",
             health,
-            "Check configured ComfyUI connectivity; not GPU readiness.",
+            "Check server connectivity, or native-local configuration without starting it; never GPU readiness.",
             {},
             [],
         ),
         (
             "remesher_generate",
             generate,
-            "Submit one bounded image-to-GLB job to the configured ComfyUI server. Uploads the local image and uses GPU resources. Returns a job_id; poll remesher_job. Never automatically retry ambiguous failures.",
+            "Submit one bounded image-to-GLB job using the configured comfy3d, native or native-local backend. Uploads the local image; native-local starts an owned server and may use GPU resources. Returns a job_id; poll remesher_job. Never automatically retry ambiguous failures.",
             {
                 "image": {
                     "type": "string",

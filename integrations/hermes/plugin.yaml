@@ -1,6 +1,6 @@
 name: remesher
-version: 0.1.0
-description: Bounded image-to-GLB jobs through an isolated Remesher CLI and existing ComfyUI backend.
+version: 0.2.0
+description: Bounded image-to-GLB jobs through an isolated Remesher CLI with comfy3d, native and native-local backends.
 author: Remesher
 provides_tools:
   - remesher_health

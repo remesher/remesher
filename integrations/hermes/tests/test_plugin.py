@@ -32,6 +32,184 @@ class PluginTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
 
+    def test_native_local_structured_settings_and_argv(self):
+        plugin, image = self.fixture("""
+assert "--config" not in sys.argv and "--workflow-file" not in sys.argv
+assert sys.argv[sys.argv.index("--backend") + 1] == "native-local"
+assert sys.argv[sys.argv.index("--native-model") + 1] == "pixal3d"
+assert sys.argv[sys.argv.index("--native-device") + 1] == "cuda"
+import os
+assert os.environ["CUDA_VISIBLE_DEVICES"] == "2"
+assert "PYTHONPATH" not in os.environ and "HF_TOKEN" not in os.environ
+out = pathlib.Path(sys.argv[sys.argv.index("--out-dir") + 1])
+(out / "mesh.glb").write_bytes(struct.pack("<4sII", b"glTF", 2, 12))
+""")
+        checkout = self.root / "Comfy UI ; literal"
+        checkout.mkdir()
+        (checkout / "main.py").touch()
+        python = self.root / "venv python"
+        python.symlink_to("/usr/bin/python3")
+        config = self.root / "plugin.json"
+        config.write_text(
+            json.dumps(
+                {
+                    "cli": os.environ["REMESHER_CLI"],
+                    "backend": "native-local",
+                    "native_python": str(python),
+                    "native_checkout": str(checkout),
+                    "native_device": "cuda",
+                    "native_model": "pixal3d",
+                    "environment": {"CUDA_VISIBLE_DEVICES": "2"},
+                }
+            )
+        )
+        with patch.dict(
+            os.environ, {"REMESHER_SETTINGS": str(config), "HF_TOKEN": "secret"}
+        ):
+            result = plugin.generate({"image": str(image), "timeout_seconds": 5})
+        self.assertEqual(result["status"], "queued", result)
+        final = self.wait_job(plugin, result["job_id"])
+        self.assertEqual(final["status"], "succeeded", final)
+        request = json.loads(
+            (Path(final["log_path"]).parent / "request.json").read_text()
+        )
+        argv = request["argv"]
+        self.assertEqual(argv[argv.index("--native-python") + 1], str(python))
+        self.assertEqual(argv[argv.index("--native-checkout") + 1], str(checkout))
+        self.assertEqual(
+            argv[argv.index("--native-runs") + 1],
+            str(Path(final["log_path"]).parent / "native-runs"),
+        )
+        self.assertEqual(final["backend"], "native-local")
+
+    def test_native_health_is_backend_specific_and_read_only(self):
+        plugin, _ = self.fixture("pass\n")
+        checkout = self.root / "comfy"
+        checkout.mkdir()
+        (checkout / "main.py").touch()
+        for backend in ("native", "native-local"):
+            with (
+                patch.dict(
+                    os.environ,
+                    {
+                        "REMESHER_BACKEND": backend,
+                        "REMESHER_NATIVE_PYTHON": "/usr/bin/python3",
+                        "REMESHER_NATIVE_CHECKOUT": str(checkout),
+                        "REMESHER_NATIVE_SERVER": "http://127.0.0.1:9123",
+                    },
+                ),
+                patch.object(plugin, "run_cli", return_value=(0, False)) as run,
+            ):
+                result = plugin.health({})
+                self.assertEqual(result["backend"], backend)
+                self.assertFalse(result["gpu_generation_verified"])
+                if backend == "native-local":
+                    self.assertEqual(result["status"], "configured")
+                    run.assert_not_called()
+                else:
+                    self.assertEqual(result["scope"], "connectivity_only")
+                    self.assertEqual(result["status"], "healthy")
+
+    def test_native_timeout_allows_cli_to_reap_owned_session(self):
+        plugin, _ = self.fixture("pass\n")
+        marker = self.root / "cleanup"
+        cli = self.root / "owned runtime"
+        cli.write_text(
+            "#!/usr/bin/python3\nimport signal,time,pathlib\ndef close(*args):\n pathlib.Path("
+            + repr(str(marker))
+            + ').write_text("terminated")\n raise SystemExit(0)\nsignal.signal(signal.SIGTERM, close)\ntime.sleep(60)\n'
+        )
+        cli.chmod(0o700)
+        _code, timed_out = plugin.run_cli(
+            [str(cli), "image-to-glb", "--backend", "native-local"],
+            self.root,
+            0.3,
+            plugin.cli_environment(),
+        )
+        self.assertTrue(timed_out)
+        self.assertTrue(marker.exists(), "SIGKILL bypassed native runtime cleanup")
+
+    def test_configure_script_checks_and_writes_only_explicit_new_file(self):
+        import subprocess
+
+        _plugin, _ = self.fixture("pass\n")
+        candidate = self.root / "candidate.json"
+        candidate.write_text(
+            json.dumps({"cli": os.environ["REMESHER_CLI"], "backend": "native"})
+        )
+        output = self.root / "configured.json"
+        script = ROOT / "scripts" / "configure.py"
+        command = ["/usr/bin/python3", str(script), "--input", str(candidate)]
+        checked = subprocess.run(command, check=False, capture_output=True, text=True)
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        self.assertFalse(output.exists())
+        written = subprocess.run(
+            command + ["--output", str(output)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(written.returncode, 0, written.stderr)
+        self.assertEqual(json.loads(output.read_text())["backend"], "native")
+        self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+        again = subprocess.run(
+            command + ["--output", str(output)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(again.returncode, 0)
+
+    def test_native_rejects_malformed_origin_before_spawn(self):
+        plugin, image = self.fixture("pass\n")
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "REMESHER_BACKEND": "native",
+                    "REMESHER_NATIVE_SERVER": "http://127.0.0.1\n:8188",
+                },
+            ),
+            patch.object(plugin.subprocess, "Popen") as spawn,
+        ):
+            self.assertEqual(
+                plugin.generate({"image": str(image)})["status"], "invalid_request"
+            )
+            spawn.assert_not_called()
+
+    def test_structured_settings_reject_unsafe_values(self):
+        plugin, _ = self.fixture("pass\n")
+        base = {"cli": os.environ["REMESHER_CLI"], "backend": "native"}
+        for update in (
+            {"backend": "unknown"},
+            {"native_model": "unknown"},
+            {"native_server": "https://127.0.0.1"},
+            {"native_server": "http://localhost:8188"},
+            {"native_server": "http://user:password@127.0.0.1"},
+            {"native_server": "http://127.0.0.1:8188/path"},
+            {"native_server": "http://127.0.0.1:99999"},
+            {"native_python": "/unused", "backend": "native-local"},
+            {"environment": {"PYTHONPATH": "/poison"}},
+            {"environment": {"HF_TOKEN": "not-allowed"}},
+            {"environment": {"LD_LIBRARY_PATH": "/lib:"}},
+            {"environment": {"HF_HOME": "relative"}},
+            {"environment": {"CUDA_VISIBLE_DEVICES": 0}},
+            {"argv": ["--anything"]},
+        ):
+            with self.subTest(update=update), self.assertRaises(ValueError):
+                plugin.validate_settings({**base, **update})
+        cfg = plugin.validate_settings(
+            {
+                **base,
+                "environment": {
+                    "LD_LIBRARY_PATH": "/lib:/usr/lib",
+                    "HF_HOME": "/cache/hf",
+                },
+            }
+        )
+        self.assertEqual(plugin.cli_environment(cfg)["HF_HOME"], "/cache/hf")
+        self.assertNotIn("--workflow-file", plugin.backend_arguments(cfg, self.root))
+
     def test_state_sync_failure_preserves_previous_receipt(self):
         plugin = load_plugin()
         plugin.save_state(self.root, {"status": "queued"})

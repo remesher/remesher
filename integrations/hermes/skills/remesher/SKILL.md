@@ -1,38 +1,75 @@
 ---
 name: remesher
-description: Generate a GLB from a local image with the Remesher tools, inspect persistent job status, and retrieve artifacts from a configured ComfyUI backend.
+description: Configure and inspect Remesher setup, generate GLBs from local images with comfy3d or native backends, and retrieve persistent job artifacts.
 ---
 
-# Remesher image-to-GLB
+# Remesher setup and image-to-GLB
 
-1. Call `remesher_health`. Healthy means `/system_stats` connectivity only, not
-   installed Trellis2 nodes/models or a successful GPU generation.
-2. Ensure the user authorized uploading this image to the configured server and
-   using its GPU resources. Never provision services or download models implicitly.
-3. Call `remesher_generate` once with an absolute local PNG/JPEG/WebP `image` path.
-   Optional `timeout_seconds` is 1–1800 (default 900); `target_face_num` is
-   1000–200000 (default 80000). Inputs are limited to 20 MiB. Save the returned job_id.
-4. Poll `remesher_job` with that ID, no faster than every few seconds. Local states
-   are `queued`, `running`, `succeeded`, `failed`, `timed_out`, or `interrupted`.
-   A second concurrent local submission returns `busy` rather than queueing.
-5. On success, call `remesher_assets` and report the actual artifact path and hash.
-   Validation checks the GLB header only; it does not prove mesh quality or rendering.
-   Both read tools rehash artifacts. `integrity_error` means the saved output is
-   missing, changed, symlinked, or unreadable: do not deliver stale paths or claim
-   success. Preserve the original receipt for investigation; do not regenerate
-   automatically. Verify the hash again when consuming the artifact.
+## Agent-configurable setup
 
-A local timeout or interrupted worker does **not** cancel the server-side ComfyUI
-prompt. Do not blindly retry: inspect the configured server queue/history first.
-The supervisor may continue after Hermes exits, up to the submitted deadline.
-Never restart a running/terminal worker to retry it: only a queued receipt may
-be consumed. Inspection shares the CLI deadline; overdue bytes are not success.
-The first slice intentionally has no cancel, rigging, text generation, desktop
-viewer, native local inference backend, or MCP surface.
+1. Discover the installed plugin directory and read its `README.md`. Inspect the
+   actual Remesher CLI's `image-to-glb --help` before selecting a native backend.
+   Keep Remesher dependencies out of Hermes's Python. Preserve existing settings;
+   do not mutate an active profile, install packages or download weights implicitly.
+2. Choose `comfy3d` (default existing Comfy3D server), `native` (existing numeric
+   loopback native ComfyUI server), or `native-local` (CLI-owned local child).
+   Native modes require the native CLI implementation; legacy config/workflow
+   are unnecessary. Native-local requires absolute `native_python` (preserve
+   venv symlinks) and `native_checkout` containing `main.py`.
+3. With user authorization, write a **candidate JSON file**, using the README
+   schema: `cli`, `backend`, backend-specific settings and optional allowlisted
+   `environment`. For native-local, set `native_device` to `cuda` or `cpu` and
+   `native_model` to `trellis2` or `pixal3d`. Never insert shell strings or extra
+   arguments. Device/cache variables must be explicit in `environment`; ambient
+   CUDA/HF/Torch variables are scrubbed along with Python/uv activation and tokens.
+4. Run `python <plugin>/scripts/configure.py --input <candidate.json>` for
+   read-only validation and model-file inspection. `configured` means paths and
+   settings only, not importability, model visibility or GPU readiness. Missing
+   default model files may be supplied through ComfyUI's own `extra_model_paths.yaml`;
+   this script does not parse or modify it. Cache locations are **not** model roots.
+5. With authorization, publish to a **new explicit absolute file**:
+   `python <plugin>/scripts/configure.py --input <candidate.json> --output <settings.json>`.
+   Existing files/symlinks are refused. Set `REMESHER_SETTINGS` in the intended
+   Hermes process environment and start a fresh session after authorized changes.
+   The script never edits profile config, `.env`, dependencies or installation.
+6. Provisioning is a separate boundary: the checked native CLI revision
+   `829f821931ab2bee1df4655a241cd2fa77621bb3` has no native setup/download script.
+   Do not invent one or use the legacy Comfy3D downloader for native weights.
+   If a newer checkout ships a setup script, discover and read its source/help
+   and get permission for its actual side effects before use. The bundled
+   `scripts/configure.py` configures **this plugin only**. Verify native graph/model
+   enumerations on the selected server; file existence alone is insufficient.
 
-If unavailable, ask the operator to configure absolute paths `REMESHER_CLI`,
-`REMESHER_CONFIG`, and `REMESHER_WORKFLOW` as described in the plugin README.
-Do not change the active Hermes configuration or install dependencies without
-permission. Artifacts and private logs remain in the profile's plugin-data
-storage, not the plugin checkout. Logs may contain server details; inspect locally
-and redact before sharing. Never claim fixture tests are real GPU evidence.
+## Generation and delivery
+
+1. Call `remesher_health`. Server-mode `healthy` means `/system_stats` connectivity
+   only. Native-local returns `configured` without starting a server, and explicitly
+   leaves model/GPU readiness unverified. Never describe either as GPU certification.
+2. Ensure the user authorized the image upload/local server startup and GPU usage.
+   Call `remesher_generate` once with absolute PNG/JPEG/WebP `image` (max 20 MiB).
+   Optional `timeout_seconds`: 1–1800, default 900; `target_face_num`: 1000–200000,
+   default 80000. Save the returned job_id. Backend and paths are setup settings,
+   not per-call model-controlled tool arguments.
+3. Poll `remesher_job` every few seconds. States are `queued`, `running`,
+   `succeeded`, `failed`, `timed_out` or `interrupted`. One active local job per
+   profile; another submission returns `busy`. Never replay an ambiguous job.
+4. On success call `remesher_assets`; report the actual path and hash. Validation
+   is GLB header/length only, not geometry, rendering or inference provenance.
+   Reads rehash outputs; `integrity_error` means no safe artifact delivery. Keep
+   the original receipt and investigate rather than automatically regenerate.
+   Verify the hash again when consuming an artifact.
+
+Native-local deadlines allow up to 12 seconds of additional cleanup grace for
+the CLI to reap its owned server. SIGKILL/host crash can still leave a server
+behind. Existing native/comfy3d server jobs are **not remotely cancelled** by
+local timeout. Inspect queue/history before retrying, and never globally interrupt
+another user's jobs. Supervisors may continue after Hermes exits; only queued
+receipts are consumed, never running/terminal receipts. Artifact inspection shares
+the deadline; overdue bytes are not success.
+
+Artifacts/logs live in profile plugin-data storage, not the checkout. Native-local
+run/server logs live under the job's `native-runs`; server log size is not capped.
+Don't update code or delete job storage while a worker is active. Inspect logs
+locally and redact private details before sharing. No cancel, rigging, text
+input, viewer or MCP surface is provided. Never claim fixture tests are real GPU
+inference evidence.
