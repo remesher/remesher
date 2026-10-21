@@ -172,6 +172,16 @@ also reports `model_visibility_verified: false`. `configured` is not `healthy`
 and neither is inference evidence. Tools stay registered while unconfigured so
 health can explain setup and old job IDs remain readable.
 
+For opt-in native mesh repair, `remesher_generate` also accepts `mesh_repair`
+(`none`, `fill`, `solid`; default `none`), `repair_resolution` (32–2048, default
+512), `repair_max_perimeter` (0–.03, default .03), and
+`repair_drop_small_components` (0–.5, default .005). Repair requires
+`no_decimation: true`; no face/vertex cap or new NVIDIA-only dependency is added.
+With repair enabled, geometry is repaired before the unchanged UV/PBR stages
+instead of going directly to unwrap. Stage GLBs remain in the owned native run
+output, while plugin assets advertise the final textured GLB only. See
+[portable repair documentation](../../docs/native-portable-repair.md).
+
 - States: `queued → running → succeeded | failed | timed_out`. A supervisor that
   misses its deadline plus 30 seconds is observed as `interrupted`, never replayed.
   One active job per profile; per-job and admission locks; no automatic retry.

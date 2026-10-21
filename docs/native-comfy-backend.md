@@ -189,6 +189,11 @@ settings, UV weld distance and atlas resolution are unchanged. This is not a
 watertightness/quality guarantee; UV unwrapping still welds/splits seam vertices.
 Larger meshes increase memory use, UV processing time and file size.
 
+Opt-in `--mesh-repair fill|solid` runs native Torch/SciPy repair before UV/PBR,
+requires `--no-decimation`, and adds no NVIDIA-only dependencies. See
+[portable repair settings and limitations](native-portable-repair.md) and
+[actual wrestler stage evidence](portable-repair-wrestler-acceptance.md).
+
 `examples/img_to_native_trellis2.json` is a plain API-format example;
 `native_backend.build_prompt` builds the equivalent graph and maps native
 image/seed/face-count/prefix overrides. The source interfaces were rechecked at

@@ -334,6 +334,20 @@ def _generate(args):
             raise ValueError("no_decimation must be a boolean")
         if no_decimation and cfg["backend"] == "comfy3d":
             raise ValueError("no_decimation requires a native backend")
+        repair = args.get("mesh_repair", "none")
+        if repair not in ("none", "fill", "solid"):
+            raise ValueError("mesh_repair must be none, fill or solid")
+        if repair != "none" and (cfg["backend"] == "comfy3d" or not no_decimation):
+            raise ValueError("mesh_repair requires a native backend and no_decimation")
+        resolution = args.get("repair_resolution", 512)
+        perimeter = args.get("repair_max_perimeter", 0.03)
+        small = args.get("repair_drop_small_components", 0.005)
+        if type(resolution) is not int or not 32 <= resolution <= 2048:
+            raise ValueError("repair_resolution must be an integer from 32 to 2048")
+        for value, upper, name in ((perimeter, 0.03, "repair_max_perimeter"),
+                                   (small, 0.5, "repair_drop_small_components")):
+            if type(value) not in (int, float) or not 0 <= value <= upper:
+                raise ValueError(f"{name} must be finite and between 0 and {upper}")
         if type(timeout) is not int or not 1 <= timeout <= 1800:
             raise ValueError("timeout_seconds must be an integer from 1 to 1800")
         if type(faces) is not int or not 1000 <= faces <= 200000:
@@ -367,6 +381,9 @@ def _generate(args):
             "--filename-prefix",
             "hermes_" + job_id,
             *(["--no-decimation"] if no_decimation else ["--target-face-num", str(faces)]),
+            *(["--mesh-repair", repair, "--repair-resolution", str(resolution),
+               "--repair-max-perimeter", str(perimeter),
+               "--repair-drop-small-components", str(small)] if repair != "none" else []),
             "--timeout",
             str(timeout),
         ]
@@ -698,6 +715,22 @@ def register(ctx):
                     "type": "boolean",
                     "default": False,
                     "description": "Native only: bypass simplification with no face/vertex cap; retain UV/PBR export.",
+                },
+                "mesh_repair": {
+                    "type": "string", "enum": ["none", "fill", "solid"],
+                    "description": "Opt-in native Torch/SciPy repair before UV/PBR; requires no_decimation. No new NVIDIA-only dependencies. Default none.",
+                },
+                "repair_resolution": {
+                    "type": "integer", "minimum": 32, "maximum": 2048,
+                    "description": "Solid remesh grid, default 512; generation resolution unchanged, no face cap.",
+                },
+                "repair_max_perimeter": {
+                    "type": "number", "minimum": 0, "maximum": 0.03,
+                    "description": "Small-hole perimeter in mesh units, default .03; 0 skips fill. No open-chain fill.",
+                },
+                "repair_drop_small_components": {
+                    "type": "number", "minimum": 0, "maximum": 0.5,
+                    "description": "Solid remesh component fraction of largest, default .005; 0 retains all.",
                 },
                 "target_face_num": {
                     "description": "Simplified face target; ignored when no_decimation is true.",

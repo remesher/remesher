@@ -48,6 +48,33 @@ class PluginTests(unittest.TestCase):
             result = plugin.generate({"image": str(image), **extra})
             self.assertEqual(result["status"], "invalid_request", result)
 
+    def test_portable_repair_forwarded_without_face_cap(self):
+        plugin, image = self.fixture('assert "--mesh-repair" in sys.argv\nassert "--target-face-num" not in sys.argv\n')
+        with patch.dict(os.environ, {"REMESHER_BACKEND": "native"}):
+            result = plugin.generate({"image": str(image), "no_decimation": True,
+                                      "mesh_repair": "solid", "repair_resolution": 1024,
+                                      "repair_max_perimeter": .02,
+                                      "repair_drop_small_components": 0.})
+        self.assertEqual(result["status"], "queued", result)
+        argv = json.loads((Path(result["log_path"]).parent / "request.json").read_text())["argv"]
+        for flag, value in (("--mesh-repair", "solid"), ("--repair-resolution", "1024"),
+                            ("--repair-max-perimeter", "0.02"),
+                            ("--repair-drop-small-components", "0.0")):
+            self.assertEqual(argv[argv.index(flag) + 1], value)
+        self.wait_job(plugin, result["job_id"])
+
+    def test_portable_repair_rejects_unsafe_or_legacy_requests(self):
+        plugin, image = self.fixture("pass\n")
+        result = plugin.generate({"image": str(image), "mesh_repair": "solid"})
+        self.assertEqual(result["status"], "invalid_request", result)
+        with patch.dict(os.environ, {"REMESHER_BACKEND": "native"}):
+            for extra in ({"no_decimation": False}, {"mesh_repair": "invalid"},
+                          {"repair_resolution": True}, {"repair_max_perimeter": float('nan')},
+                          {"repair_max_perimeter": .04}, {"repair_drop_small_components": -.01}):
+                result = plugin.generate({"image": str(image), "no_decimation": True,
+                                          "mesh_repair": "solid", **extra})
+                self.assertEqual(result["status"], "invalid_request", result)
+
     def test_native_config_uses_private_snapshot_without_conflicting_flags(self):
         plugin, image = self.fixture("""
 import json

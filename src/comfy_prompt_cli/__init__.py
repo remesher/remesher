@@ -1042,6 +1042,10 @@ def image_to_glb(
     native_model: str = typer.Option("trellis2", help="Native diffusion branch: trellis2 or pixal3d."),
     native_camera_angle: float = typer.Option(49.13, min=1, max=170, help="Pixal3D camera_angle_x (degrees); no automatic MoGe estimation."),
     no_decimation: bool = typer.Option(False, "--no-decimation", help="Native only: bypass mesh simplification; no face/vertex cap, preserve UV/PBR export."),
+    mesh_repair: str = typer.Option("none", help="Opt-in native repair before UV: none, fill, solid. Requires --no-decimation. Uses built-in Torch/SciPy nodes; installs no NVIDIA-only dependencies."),
+    repair_resolution: int = typer.Option(512, min=32, max=2048, help="Solid remesh grid only; does not change generation resolution or impose a face cap."),
+    repair_max_perimeter: float = typer.Option(0.03, min=0, max=0.03, help="Small-hole perimeter in mesh units; 0 skips filling. Chains disabled, at most 16 boundary vertices."),
+    repair_drop_small_components: float = typer.Option(0.005, min=0, max=0.5, help="Solid remesh: discard disconnected components below this fraction of the largest. 0 disables."),
     image: Path = typer.Option(
         ..., exists=True, readable=True, help="Local input image path"
     ),
@@ -1072,6 +1076,10 @@ def image_to_glb(
         raise typer.BadParameter("backend must be comfy3d, native or native-local")
     if no_decimation and backend == "comfy3d":
         raise typer.BadParameter("--no-decimation requires a native backend")
+    if mesh_repair not in {"none", "fill", "solid"}:
+        raise typer.BadParameter("--mesh-repair must be none, fill or solid")
+    if mesh_repair != "none" and (backend == "comfy3d" or not no_decimation):
+        raise typer.BadParameter("--mesh-repair requires a native backend and --no-decimation")
     if native_config is not None:
         if backend != "native-local":
             raise typer.BadParameter("--native-config requires --backend native-local")
@@ -1144,6 +1152,9 @@ def image_to_glb(
                         texture_seed=43 if texture_seed is None else texture_seed,
                         target_face_num=80000 if target_face_num is None else target_face_num,
                         no_decimation=no_decimation,
+                        mesh_repair=mesh_repair, repair_resolution=repair_resolution,
+                        repair_max_perimeter=repair_max_perimeter,
+                        repair_drop_small_components=repair_drop_small_components,
                         filename_prefix=filename_prefix or "remesher")
             for path in downloaded:
                 typer.echo(f"Downloaded {path}")

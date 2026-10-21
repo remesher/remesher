@@ -8,6 +8,7 @@ Input should be a cropped, background-clean object image. This is not the
 
 from __future__ import annotations
 
+import math
 import os
 import struct
 import tempfile
@@ -26,11 +27,27 @@ def build_prompt(
     texture_seed=43,
     target_face_num=80000,
     no_decimation=False,
+    mesh_repair="none",
+    repair_resolution=512,
+    repair_max_perimeter=0.03,
+    repair_drop_small_components=0.005,
     filename_prefix="remesher",
     camera_angle=49.13,
 ):
     if model not in {"trellis2", "pixal3d"}:
         raise ValueError("native model must be trellis2 or pixal3d")
+    if mesh_repair not in {"none", "fill", "solid"}:
+        raise ValueError("mesh repair must be none, fill or solid")
+    if mesh_repair != "none" and not no_decimation:
+        raise ValueError("mesh repair requires --no-decimation (no hidden face cap)")
+    if type(repair_resolution) is not int or not 32 <= repair_resolution <= 2048:
+        raise ValueError("repair resolution must be an integer from 32 to 2048")
+    for value, upper, name in (
+        (repair_max_perimeter, 0.03, "repair max perimeter"),
+        (repair_drop_small_components, 0.5, "repair drop small components"),
+    ):
+        if type(value) not in (int, float) or not 0 <= value <= upper:
+            raise ValueError(f"{name} must be finite and between 0 and {upper}")
     if not 1 <= target_face_num <= 50000000:
         raise ValueError("native target face count must be between 1 and 50000000")
     if not all(
@@ -179,6 +196,25 @@ def build_prompt(
         target_face_count=target_face_num,
         placement_mode="midpoint",
     )
+    if mesh_repair == "solid":
+        reduced = node(
+            "repair_remesh", "RemeshMesh", mesh=reduced,
+            resolution=repair_resolution, sign_mode="solid",
+            **{"sign_mode.fill": 20.0, "sign_mode.qef": False},
+            band=1.0, project_back=0.0, fix_poles=False, smooth_iters=0,
+            drop_small_components=repair_drop_small_components,
+            precluster_max_verts=0,
+        )
+    if mesh_repair != "none":
+        reduced = node(
+            "repair_fill", "FillHoles", mesh=reduced,
+            max_perimeter=repair_max_perimeter,
+            weld_epsilon_rel=0.0, max_vertices=16, fill_chains=False,
+        )
+        node("save_decoded", "SaveGLB", mesh=mesh,
+             filename_prefix=filename_prefix + "_decoded")
+        node("save_repaired", "SaveGLB", mesh=reduced,
+             filename_prefix=filename_prefix + "_repaired")
     uv = node(
         "unwrap",
         "UnwrapMesh",
@@ -234,9 +270,26 @@ def validate_prompt(graph, info):
     for node in graph.values():
         cls = node["class_type"]
         schema = info[cls]
-        required = schema["input"].get("required", {})
+        required = dict(schema["input"].get("required", {}))
         allowed = {**required, **schema["input"].get("optional", {})}
         inputs = node["inputs"]
+        # V3 DynamicCombo serializes children as dotted sibling inputs.
+        pending = list(allowed.items())
+        while pending:
+            name, spec = pending.pop()
+            if spec[0] != "COMFY_DYNAMICCOMBO_V3" or name not in inputs:
+                continue
+            selected = next((o for o in spec[1]["options"]
+                             if o["key"] == inputs[name]), None)
+            if selected is None:
+                raise ValueError(f"native dynamic option unavailable: {cls}.{name}")
+            for category in ("required", "optional"):
+                for child, child_spec in selected["inputs"].get(category, {}).items():
+                    key = f"{name}.{child}"
+                    allowed[key] = child_spec
+                    if category == "required":
+                        required[key] = child_spec
+                    pending.append((key, child_spec))
         if set(required) - inputs.keys() or inputs.keys() - allowed.keys():
             raise ValueError(f"native input schema mismatch: {cls}")
         for name, value in inputs.items():
@@ -275,6 +328,7 @@ def validate_prompt(graph, info):
                     isinstance(value, bool)
                     or not isinstance(value, (int, float))
                     or (kind == "INT" and not isinstance(value, int))
+                    or not math.isfinite(value)
                 ):
                     raise ValueError(f"native numeric type mismatch: {cls}.{name}")
                 bounds = spec[1] if len(spec) > 1 else {}
