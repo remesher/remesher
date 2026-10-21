@@ -7,6 +7,9 @@ implements the native contract below (PR18); this plugin does not install it.
 Nothing provisions services, downloads models, or changes an active profile at
 import, registration, doctor, validation, health, or configuration inspection.
 
+Combined native-config real GPU evidence and remaining review/quality gates:
+[TRELLIS wrestler acceptance](../../docs/trellis-plugin-acceptance.md).
+
 ## Backend and configuration contract
 
 Requires POSIX, Python 3.11+, a separately installed CLI, and trusted executable,

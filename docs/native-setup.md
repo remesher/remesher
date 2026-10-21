@@ -145,7 +145,7 @@ its legacy `typer[all]` extra warning is non-fatal. No live GPU result is claime
 | Per-run configured model visibility and owned-child lifecycle | Protocol fixtures in `tests/test_native_runtime.py`, `tests/test_native_cli.py` |
 | Installed wheel packaging/CLI | `sh scripts/verify-native-wheel.sh`; isolated wheel env, no repository import fallback |
 | Real package/network model installation | Separate runtime acceptance; fixture installer tests do not certify fresh network installs |
-| Real TRELLIS structure → shape → texture → UV/PBR → GLB on Spark | Separate inference worker; must retain actual execution and mesh inspection evidence before green |
+| Real TRELLIS structure → shape → texture → UV/PBR → GLB on Spark | Passed via actual combined Hermes plugin → wheel CLI → owned child; [wrestler acceptance and limitations](trellis-plugin-acceptance.md) |
 | Pixal3D setup preset and real inference | **Deferred until TRELLIS is green end-to-end**, per user direction; no Pixal3D diffusion download or support claim in setup |
 | CPU/MPS/ROCm generation | Not certified; no fallback claims |
 
