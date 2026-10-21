@@ -1,15 +1,21 @@
 # Agent-operated native setup contract
 
-The legacy backend remains the default. The optional setup CLI supports **only
-TRELLIS core**: four weights, 8,512,567,756 bytes. It does not download the
-Pixal3D diffusion model, BiRefNet, or MoGe. The shared DINO checkpoint comes from
-the official Pixal3D repository but is also used by TRELLIS.
+The legacy backend remains the default. Optional setup supports explicit
+`trellis2` (default, four weights) and `pixal3d` (five weights) presets.
+Pixal3D reuses the identical hashed shape VAE, texture VAE and DINO assets;
+only its diffusion model and MoGe geometry model are additional downloads.
+BiRefNet is not included: both paths consume an already prepared image.
+See [Pixal3D acceptance](pixal3d-acceptance.md): pipeline execution passed,
+but this wrestler's elongated hands **failed visual quality**.
 
 ## Executable interface (also for the Hermes plugin)
 
 ```sh
 # No writes, installs, downloads or GPU probe. stdout is one JSON document.
 comfy-prompt-cli native-setup plan --root /absolute/native-runtime
+
+# Explicit alternate preset; --model is accepted only with --root.
+comfy-prompt-cli native-setup plan --root /absolute/pixal-runtime --model pixal3d
 
 # Inspect existing resources; no installs/downloads/server launch.
 comfy-prompt-cli native-setup check --config /absolute/native-setup.json
@@ -146,13 +152,19 @@ its legacy `typer[all]` extra warning is non-fatal. No live GPU result is claime
 | Installed wheel packaging/CLI | `sh scripts/verify-native-wheel.sh`; isolated wheel env, no repository import fallback |
 | Real package/network model installation | Separate runtime acceptance; fixture installer tests do not certify fresh network installs |
 | Real TRELLIS structure → shape → texture → UV/PBR → GLB on Spark | Passed via actual combined Hermes plugin → wheel CLI → owned child; [wrestler acceptance and limitations](trellis-plugin-acceptance.md) |
-| Pixal3D setup preset and real inference | **Deferred until TRELLIS is green end-to-end**, per user direction; no Pixal3D diffusion download or support claim in setup |
+| Pixal3D setup preset and real inference | Implemented and tested through installed wheel/plugin on Spark; [separate pipeline and quality results](pixal3d-acceptance.md) |
 | CPU/MPS/ROCm generation | Not certified; no fallback claims |
 
-For a future Pixal3D preset, extend the packaged model manifest and introduce an
-explicit, versioned selection in setup config. Share the identical hashed
-vision/VAE assets; add only the approved diffusion asset. Keep each preset's
-required hashes, byte totals, graph selection and acceptance status separate.
-Do not reinterpret a TRELLIS config as permission to fetch another branch.
-Existing low-level experimental Pixal3D graph selection is not Pixal3D setup or
-end-to-end acceptance.
+Schema-v1 configs now accept `"model": "pixal3d"`; missing `model` retains
+TRELLIS compatibility. To reuse a prepared runtime, create a **separate** config
+with the same venv/checkout/models paths and distinct runs/output paths, then
+run plan/check/apply with that config. Downloads still require `--allow-download`;
+do not pass `--allow-install` when reusing an approved working environment.
+The plugin derives the model from this config and snapshots it per job. Explicit
+CLI/plugin model settings that disagree with the config are rejected.
+
+Pixal3D defaults to `MoGeInference` → horizontal/degrees `MoGeGeometryToFOV` →
+`Pixal3DConditioning.camera_angle_x`. CLI `--native-camera-angle 49.13` opts out
+of estimation for a diagnostic; the preset still verifies all five assets.
+This does not claim upstream crop/cascade/multiview parity. The unchanged
+TRELLIS graph does not run MoGe.

@@ -19,7 +19,7 @@ description: Configure and inspect Remesher setup, generate GLBs from local imag
    (preserve venv symlinks) and `native_checkout` containing `main.py`.
 3. With user authorization, write a **candidate JSON file**, using the README
    schema: `cli`, `backend`, backend-specific settings and optional allowlisted
-   `environment`. Config mode supports TRELLIS only; do not mix `native_config`
+   `environment`. Config mode reads `model` (`trellis2` default or `pixal3d`); do not mix `native_config`
    with explicit runtime paths/device/server. For manual native-local, set
    `native_device` to `cuda` or `cpu`. Never insert shell strings or extra
    arguments. Device/cache variables must be explicit in `environment`; ambient

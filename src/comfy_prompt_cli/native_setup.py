@@ -1,4 +1,4 @@
-"""Explicit, pinned native TRELLIS setup. No implicit installs or downloads."""
+"""Explicit, pinned native model setup. No implicit installs or downloads."""
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ MANIFEST = json.loads(
 class SetupConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     schema_version: Literal[1] = 1
+    model: Literal["trellis2", "pixal3d"] = "trellis2"
     venv: Path
     checkout: Path
     models: Path
@@ -71,14 +72,20 @@ def load_config(path: Path) -> SetupConfig:
     return SetupConfig.model_validate_json(path.read_text())
 
 
+def selected_models(config: SetupConfig) -> list[dict]:
+    if config.model == "trellis2":
+        return MANIFEST["models"]
+    return [m for m in MANIFEST["models"] if not m["path"].startswith("diffusion_models/")] + MANIFEST["pixal3d"]
+
+
 def plan(config: SetupConfig) -> dict:
     return {
         "operation": "plan",
         "config": config.model_dump(mode="json"),
         "comfy_revision": MANIFEST["comfy_revision"],
         "comfy_repository": MANIFEST["comfy_repository"],
-        "models": MANIFEST["models"],
-        "download_bytes": sum(m["size"] for m in MANIFEST["models"]),
+        "models": selected_models(config),
+        "download_bytes": sum(m["size"] for m in selected_models(config)),
         "install_requires": "--allow-install (dedicated venv only)",
         "download_requires": "--allow-download (weights only)",
         "installation": {
@@ -300,7 +307,7 @@ def check(config, *, allow_low_memory=False):
         )
     states = []
     additional_bytes = 0
-    for model in MANIFEST["models"]:
+    for model in selected_models(config):
         path = config.models / model["path"]
         valid = verified(path, model)
         partial = path.with_suffix(path.suffix + ".part")
@@ -324,7 +331,7 @@ def check(config, *, allow_low_memory=False):
     report["missing_model_bytes"] = sum(m["size"] for m in states if not m["verified"])
     if report["missing_model_bytes"]:
         blockers.append(
-            "Missing/invalid pinned model contents; --allow-download authorizes only the four listed core weights"
+            "Missing/invalid pinned model contents; --allow-download authorizes only the selected preset's listed weights"
         )
     try:
         require_memory(config, report["memory"], allow_low_memory=allow_low_memory)
@@ -551,7 +558,7 @@ def apply(
             raise ValueError(
                 "Insufficient free disk for pinned weights plus 1 GiB margin"
             )
-        for model in MANIFEST["models"]:
+        for model in selected_models(config):
             download(model, config.models)
     after = check(config, allow_low_memory=allow_low_memory)
     after["operation"] = "apply"
@@ -582,6 +589,7 @@ def main(argv=None):
 
     parser = Parser(description=__doc__)
     parser.add_argument("operation", choices=["plan", "check", "apply"])
+    parser.add_argument("--model", choices=["trellis2", "pixal3d"], help="Preset for --root; saved configs own model selection")
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument(
         "--root",
@@ -599,7 +607,7 @@ def main(argv=None):
     parser.add_argument(
         "--allow-download",
         action="store_true",
-        help="Apply only: download the four SHA256-pinned core weights",
+        help="Apply only: download the selected preset's SHA256-pinned weights",
     )
     parser.add_argument(
         "--allow-low-memory",
@@ -613,6 +621,10 @@ def main(argv=None):
         config = (
             load_config(args.config) if args.config else SetupConfig.at_root(args.root)
         )
+        if args.model is not None:
+            if args.config:
+                raise ValueError("--model is only accepted with --root; edit a separate config to change preset")
+            config.model = args.model
         if args.operation == "plan":
             report = plan(config)
             report["memory"] = memory_status()

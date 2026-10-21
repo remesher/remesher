@@ -1040,7 +1040,7 @@ def image_to_glb(
     native_port: int = typer.Option(0, min=0, max=65535, help="native-local loopback port; 0 chooses an unused port."),
     native_startup_timeout: float = typer.Option(120, min=1, help="native-local startup deadline seconds."),
     native_model: str = typer.Option("trellis2", help="Native diffusion branch: trellis2 or pixal3d."),
-    native_camera_angle: float = typer.Option(49.13, min=1, max=170, help="Pixal3D camera_angle_x (degrees); no automatic MoGe estimation."),
+    native_camera_angle: float | None = typer.Option(None, min=1, max=170, help="Pixal3D horizontal FoV override in degrees; omitted uses MoGe estimation."),
     no_decimation: bool = typer.Option(False, "--no-decimation", help="Native only: bypass mesh simplification; no face/vertex cap, preserve UV/PBR export."),
     mesh_repair: str = typer.Option("none", help="Opt-in native repair before UV: none, fill, solid. Requires --no-decimation. Uses built-in Torch/SciPy nodes; installs no NVIDIA-only dependencies."),
     repair_resolution: int = typer.Option(512, min=32, max=2048, help="Solid remesh grid only; does not change generation resolution or impose a face cap."),
@@ -1089,9 +1089,10 @@ def image_to_glb(
                          if getattr(ctx.get_parameter_source(name), "name", None) == "COMMANDLINE"]
             if conflicts:
                 raise ValueError("--native-config conflicts with explicit " + ", ".join(conflicts))
-            if native_model != "trellis2":
-                raise ValueError("Setup config supports only the pinned TRELLIS core preset")
             setup = load_config(native_config)
+            if getattr(ctx.get_parameter_source("native_model"), "name", None) == "COMMANDLINE" and native_model != setup.model:
+                raise ValueError("--native-model conflicts with setup config model")
+            native_model = setup.model
             report = check(setup, allow_low_memory=native_allow_low_memory)
             if not report["ready"]:
                 raise ValueError("Native setup not ready: " + "; ".join(report["blockers"]))

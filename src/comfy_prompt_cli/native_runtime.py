@@ -97,6 +97,7 @@ class LocalRuntime:
                             "diffusion_models": "diffusion_models",
                             "vae": "vae",
                             "clip_vision": "clip_vision",
+                            "geometry_estimation": "geometry_estimation",
                         }
                     }
                 )

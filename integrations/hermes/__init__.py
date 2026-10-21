@@ -455,8 +455,10 @@ def read_native_config(filename):
     keys = {"venv", "checkout", "models", "runs", "output"}
     if not isinstance(config, dict) or not keys <= config.keys():
         raise ValueError("native_config requires the five runtime paths")
-    if config.keys() - keys - {"schema_version", "device", "minimum_memory_gib"}:
+    if config.keys() - keys - {"schema_version", "device", "minimum_memory_gib", "model"}:
         raise ValueError("native_config contains unsupported keys")
+    if config.get("model", "trellis2") not in ("trellis2", "pixal3d"):
+        raise ValueError("native_config model must be trellis2 or pixal3d")
     if (
         type(config.get("schema_version", 1)) is not int
         or config.get("schema_version", 1) != 1
@@ -513,8 +515,11 @@ def validate_settings(raw):
             raise ValueError(
                 "native_config cannot be combined with explicit runtime settings"
             )
-        if cfg.get("native_model", "trellis2") != "trellis2":
-            raise ValueError("native_config supports only trellis2")
+        config = read_native_config(existing_path(cfg["native_config"], "native_config"))
+        model = config.get("model", "trellis2")
+        if "native_model" in cfg and cfg["native_model"] != model:
+            raise ValueError("native_model conflicts with native_config model")
+        cfg["native_model"] = model
     if cfg["backend"] == "comfy3d":
         cfg["config"] = existing_path(cfg.get("config"), "config")
     else:

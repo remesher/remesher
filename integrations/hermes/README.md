@@ -117,7 +117,8 @@ Check/apply must exit 0 with `ready=true` before generation. Configure the plugi
 ```
 
 `REMESHER_NATIVE_CONFIG` is the equivalent scalar environment setting. Config
-mode supports TRELLIS only and rejects explicit interpreter, checkout, device
+mode selects TRELLIS or Pixal3D from its `model` field (missing means TRELLIS)
+and rejects conflicting model settings and explicit interpreter, checkout, device
 or server settings. Health/configure inspect schema-v1 JSON and path structure,
 not dependency availability, hashes or memory; `configured` is not `ready`.
 The CLI rechecks full setup readiness before each launch, without downloads.

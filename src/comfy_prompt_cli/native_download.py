@@ -112,7 +112,7 @@ def download(model: dict, root: Path, *, client=None, deadline_seconds=3600) -> 
     if (
         relative.is_absolute()
         or ".." in relative.parts
-        or model["repo"] not in {"Comfy-Org/TRELLIS.2", "Comfy-Org/Pixal3D"}
+        or model["repo"] not in {"Comfy-Org/TRELLIS.2", "Comfy-Org/Pixal3D", "Comfy-Org/MoGe"}
         or not re.fullmatch(r"[0-9a-f]{40}", model["revision"])
         or not re.fullmatch(r"[0-9a-f]{64}", model["sha256"])
         or model["size"] <= 0

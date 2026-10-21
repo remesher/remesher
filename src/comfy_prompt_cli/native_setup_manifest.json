@@ -7,5 +7,9 @@
     {"repo": "Comfy-Org/TRELLIS.2", "revision": "430a9d09b2416687018c8fe8edced2ad4858a439", "path": "vae/trellis_2_shape_vae_bf16.safetensors", "size": 1095844024, "sha256": "de0cb4949a76c59ee5c091a995a69bcc8c51d5aeda939f0c641a50d2a72341f4"},
     {"repo": "Comfy-Org/TRELLIS.2", "revision": "430a9d09b2416687018c8fe8edced2ad4858a439", "path": "vae/trellis_2_texture_vae_bf16.safetensors", "size": 948461364, "sha256": "714e5ebf094a610e12a8e3b5175c18a62f37f6ea4218acb6073644456b73ab0e"},
     {"repo": "Comfy-Org/Pixal3D", "revision": "f37641be376725d324c56626007cc477f1249a69", "path": "clip_vision/dino_v3_L_naf_fp32.safetensors", "size": 1215214176, "sha256": "4ad2ec4e0879a5b5b04cd97325cc37da954a7b6edca5170b86510f17f2b2290f"}
+  ],
+  "pixal3d": [
+    {"repo": "Comfy-Org/Pixal3D", "revision": "f37641be376725d324c56626007cc477f1249a69", "path": "diffusion_models/pixal3d_int8_convrot.safetensors", "size": 5584555824, "sha256": "4621eac3b715484f79303c7152af641fe0b2b14f4d0e3d394fd6922d00f955ec"},
+    {"repo": "Comfy-Org/MoGe", "revision": "1484985258ba7ef45c314144fcf0e90924ffbf44", "path": "geometry_estimation/moge_2_vitl_normal_fp16.safetensors", "size": 661859924, "sha256": "cb1a692d03235671e959e81360d7b4d9f44aefadb1f852d6ca6aa17799d5e31f"}
   ]
 }

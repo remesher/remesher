@@ -58,6 +58,7 @@ def test_configured_model_path_is_visible_to_child(checkout, tmp_path):
         settings = json.loads((runtime.run_dir / "models.yaml").read_text())
         assert settings["remesher"]["base_path"] == str(models)
         assert settings["remesher"]["is_default"] is True
+        assert settings["remesher"]["geometry_estimation"] == "geometry_estimation"
         assert runtime.process.poll() is None
 
 

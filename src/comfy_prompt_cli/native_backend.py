@@ -32,7 +32,7 @@ def build_prompt(
     repair_max_perimeter=0.03,
     repair_drop_small_components=0.005,
     filename_prefix="remesher",
-    camera_angle=49.13,
+    camera_angle=None,
 ):
     if model not in {"trellis2", "pixal3d"}:
         raise ValueError("native model must be trellis2 or pixal3d")
@@ -55,7 +55,7 @@ def build_prompt(
         for seed in (mesh_seed, texture_seed)
     ):
         raise ValueError("native seeds must be unsigned 64-bit integers")
-    if not 1 <= camera_angle <= 170:
+    if camera_angle is not None and not 1 <= camera_angle <= 170:
         raise ValueError("native camera angle must be between 1 and 170")
     _relative_path(filename_prefix)
     graph = {}
@@ -83,6 +83,15 @@ def build_prompt(
     )
     conditioning_inputs = {"clip_vision_model": vision, "image": image_ref}
     if model == "pixal3d":
+        if camera_angle is None:
+            moge = node("moge_model", "LoadMoGeModel",
+                        model_name="moge_2_vitl_normal_fp16.safetensors")
+            geometry = node("moge_inference", "MoGeInference", moge_model=moge,
+                            image=image_ref, resolution_level=9, fov_x_degrees=0.0,
+                            batch_size=4, force_projection=True, apply_mask=True,
+                            refine_steps=3)
+            camera_angle = node("moge_fov", "MoGeGeometryToFOV",
+                                moge_geometry=geometry, axis="horizontal", unit="degrees")
         conditioning_inputs["camera_angle_x"] = camera_angle
     node(
         "conditioning",
@@ -316,6 +325,9 @@ def validate_prompt(graph, info):
                     raise ValueError(f"native link type mismatch: {cls}.{name}")
             elif isinstance(kind, list) and value not in kind:
                 raise ValueError(f"native model or option unavailable: {cls}.{name}")
+            elif kind == "COMBO":
+                if value not in spec[1].get("options", []):
+                    raise ValueError(f"native model or option unavailable: {cls}.{name}")
             elif kind == "COMFY_DYNAMICCOMBO_V3":
                 if value not in [option["key"] for option in spec[1]["options"]]:
                     raise ValueError(f"native dynamic option unavailable: {cls}.{name}")
