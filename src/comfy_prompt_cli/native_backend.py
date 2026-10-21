@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import math
 import os
+import socket
 import struct
 import tempfile
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
@@ -410,6 +413,7 @@ def generate(
                     client,
                     entry.get("outputs", {}).get("save", {}).get("3d", []),
                     out_dir,
+                    deadline=deadline,
                 )
         time.sleep(min(poll_interval, max(0, deadline - time.monotonic())))
     raise TimeoutError(
@@ -417,7 +421,55 @@ def generate(
     )
 
 
-def _download(client, artifacts, out_dir):
+def _remaining(deadline):
+    if deadline is None:
+        return None
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("native artifact transfer timed out")
+    return remaining
+
+
+@contextmanager
+def _transfer_deadline(response, deadline):
+    """Bound blocked socket reads as well as a continuously arriving body.
+
+    HTTPX's read timeout is an inactivity timeout, captured once by the body
+    iterator. A socket shutdown at the absolute deadline also interrupts a read
+    begun late in the transfer. Only this non-reusable response connection is
+    affected; the timer is cancelled and joined before leaving its scope.
+    In-memory transports have no socket and are checked between yielded chunks.
+    """
+    remaining = _remaining(deadline)
+    stream = response.extensions.get("network_stream")
+    sock = stream.get_extra_info("socket") if stream is not None else None
+    timer = None
+    if remaining is not None and sock is not None:
+        if response.http_version == "HTTP/2":
+            raise ValueError("native artifact deadlines require an HTTP/1 connection")
+
+        def expire():
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass  # Response already closed at the deadline boundary.
+
+        timer = threading.Timer(remaining, expire)
+        timer.daemon = True
+        timer.start()
+    try:
+        yield
+        _remaining(deadline)
+    except httpx.HTTPError:
+        _remaining(deadline)  # Normalize deadline-triggered socket errors.
+        raise
+    finally:
+        if timer is not None:
+            timer.cancel()
+            timer.join()
+
+
+def _download(client, artifacts, out_dir, *, deadline=None):
     if not isinstance(artifacts, list) or not artifacts:
         raise ValueError("native completed without SaveGLB 3d artifacts")
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -444,15 +496,19 @@ def _download(client, artifacts, out_dir):
                     "GET",
                     "/view",
                     params={"filename": name, "subfolder": folder, "type": "output"},
+                    timeout=_remaining(deadline) if deadline is not None else client.timeout,
+                    headers={"Connection": "close"},
                 ) as response,
             ):
                 response.raise_for_status()
                 size = 0
-                for chunk in response.iter_bytes():
-                    size += len(chunk)
-                    if size > 512 * 1024 * 1024:
-                        raise ValueError("native artifact exceeds 512 MiB limit")
-                    output.write(chunk)
+                with _transfer_deadline(response, deadline):
+                    for chunk in response.iter_bytes():
+                        _remaining(deadline)
+                        size += len(chunk)
+                        if size > 512 * 1024 * 1024:
+                            raise ValueError("native artifact exceeds 512 MiB limit")
+                        output.write(chunk)
             with path.open("rb") as file:
                 header = file.read(12)
             if len(header) != 12 or struct.unpack("<4sII", header) != (

@@ -48,6 +48,14 @@ properties; it does not run inference or a tensor benchmark. Calls have bounded
 subprocess/network timeouts; model download deadlines are per file, with up to
 30 seconds of in-flight socket timeout beyond the deadline.
 
+Installer commands are owned process groups. On SIGTERM, the main-thread runner
+unwinds with exit status 143, sends TERM to its own group, waits at most five
+seconds, escalates to KILL (including remaining descendants), and waits at most
+five more seconds to reap its direct child. Repeated SIGTERM is ignored during
+cleanup, and the caller's previous handler is restored afterward, including on
+spawn failure. SIGKILL and host failure cannot run this cleanup. No unrelated
+process or existing server is terminated.
+
 ### Configure arbitrary existing paths
 
 Save the `config` object from plan, not the entire report, as JSON. For example:

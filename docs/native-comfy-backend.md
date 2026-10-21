@@ -174,7 +174,14 @@ longer needed. The server is not daemonized and does not survive the command.
 No PID file, `pkill`, global `/interrupt` or unrelated-server termination is used.
 For an existing `native` server, a client timeout leaves the job under operator
 control; inspect the reported prompt ID. Poll deadlines do not preempt an in-flight
-HTTP operation (30-second inactivity timeout).
+HTTP operation (30-second inactivity timeout). Once history completes, artifact
+transfers share the original absolute poll deadline; they do not get a fresh
+budget. The HTTP/1 transfer connection is non-reusable and shut down at that
+deadline, including during a late blocking read. A timed-out partial local GLB
+is removed; existing output files are untouched. The CLI uses HTTP/1; callers
+supplying an HTTP/2 client are rejected for deadline-bound transfers rather than
+closing a potentially shared multiplexed connection. Custom in-memory transports
+without a socket can only be checked when they yield data.
 
 ### Exact workflow scope
 

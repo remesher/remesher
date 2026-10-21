@@ -359,35 +359,59 @@ def _run_install(argv, log, *, cwd=None):
         GIT_CONFIG_GLOBAL=os.devnull,
         GIT_TERMINAL_PROMPT="0",
     )
-    with log.open("ab") as output:
-        child = subprocess.Popen(
-            argv,
-            cwd=cwd,
-            env=env,
-            stdin=subprocess.DEVNULL,
-            stdout=output,
-            stderr=subprocess.STDOUT,
-            start_new_session=True,
-        )
-        try:
-            code = child.wait(timeout=1800)
-            if code:
-                raise RuntimeError(f"Setup command failed ({code}); inspect {log}")
-        finally:
-            # A timeout/interrupt must not leave installer subprocesses running.
+    import threading
+
+    if threading.current_thread() is not threading.main_thread():
+        raise ValueError("native installer ownership requires the main thread for signal cleanup")
+    child = None
+    terminated = False
+
+    def terminate(signum, frame):
+        nonlocal terminated
+        terminated = True
+        # Defer unwinding during Popen until we have the owned child handle.
+        if child is not None:
+            raise SystemExit(128 + signum)
+
+    previous_sigterm = signal.getsignal(signal.SIGTERM)
+    try:
+        signal.signal(signal.SIGTERM, terminate)
+        with log.open("ab") as output:
             try:
-                os.killpg(child.pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                child.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                pass
-            try:
-                os.killpg(child.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            child.wait(timeout=5)
+                child = subprocess.Popen(
+                    argv,
+                    cwd=cwd,
+                    env=env,
+                    stdin=subprocess.DEVNULL,
+                    stdout=output,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+                if terminated:
+                    raise SystemExit(128 + signal.SIGTERM)
+                code = child.wait(timeout=1800)
+                if code:
+                    raise RuntimeError(f"Setup command failed ({code}); inspect {log}")
+            finally:
+                # Repeated SIGTERM must not cut short bounded group cleanup.
+                signal.signal(signal.SIGTERM, signal.SIG_IGN)
+                if child is not None:
+                    try:
+                        os.killpg(child.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        child.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        pass
+                    # Kill descendants even when the direct child exited first.
+                    try:
+                        os.killpg(child.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    child.wait(timeout=5)
+    finally:
+        signal.signal(signal.SIGTERM, previous_sigterm)
 
 
 def install(config):
