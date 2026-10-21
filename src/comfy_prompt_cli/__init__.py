@@ -16,7 +16,7 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlencode
 
 import httpx
@@ -1020,6 +1020,16 @@ def pad_tpose_image(
 
 @app.command("image-to-glb")
 def image_to_glb(
+    backend: str = typer.Option("comfy3d", help="comfy3d (legacy), native (existing loopback server), native-local (owned child)."),
+    native_server: str = typer.Option("http://127.0.0.1:8188", help="Existing numeric loopback native ComfyUI HTTP origin."),
+    native_python: Annotated[Path | None, typer.Option(help="Absolute Python executable for native-local; no auto-install.")] = None,
+    native_checkout: Annotated[Path | None, typer.Option(help="Absolute ComfyUI checkout for native-local.")] = None,
+    native_runs: Annotated[Path, typer.Option(help="Private per-run native-local directories and retained logs.")] = Path("native-runs"),
+    native_device: str = typer.Option("cuda", help="Explicit native-local device policy: cuda or cpu; not hardware certification."),
+    native_port: int = typer.Option(0, min=0, max=65535, help="native-local loopback port; 0 chooses an unused port."),
+    native_startup_timeout: float = typer.Option(120, min=1, help="native-local startup deadline seconds."),
+    native_model: str = typer.Option("trellis2", help="Native diffusion branch: trellis2 or pixal3d."),
+    native_camera_angle: float = typer.Option(49.13, min=1, max=170, help="Pixal3D camera_angle_x (degrees); no automatic MoGe estimation."),
     image: Path = typer.Option(
         ..., exists=True, readable=True, help="Local input image path"
     ),
@@ -1045,9 +1055,14 @@ def image_to_glb(
         Path("downloads"), help="Directory to write downloaded files"
     ),
 ) -> None:
-    """Convert image to GLB using img_to_trellis2 workflow."""
-    cfg = _load_config(config)
-    base = str(cfg.server_url).rstrip("/")
+    """Convert image to GLB; legacy Comfy3D remains the default backend."""
+    if backend not in {"comfy3d", "native", "native-local"}:
+        raise typer.BadParameter("backend must be comfy3d, native or native-local")
+    if backend != "comfy3d" and workflow_file != DEFAULT_IMAGE_TO_GLB_WORKFLOW:
+        raise typer.BadParameter("native backends use their own API graph; --workflow-file is legacy-only")
+    if backend == "comfy3d":
+        cfg = _load_config(config)
+        base = str(cfg.server_url).rstrip("/")
 
     upload_image = image
     if subject_scale < 1.0:
@@ -1064,6 +1079,45 @@ def image_to_glb(
         except (ValueError, OSError) as exc:
             raise typer.BadParameter(f"Could not pad image: {exc}") from exc
         typer.echo(f"Padded input image: {upload_image}")
+
+    if backend != "comfy3d":
+        from contextlib import nullcontext
+        from urllib.parse import urlsplit
+
+        from .native_backend import generate
+        from .native_runtime import LocalRuntime
+
+        try:
+            if backend == "native-local":
+                if native_python is None or native_checkout is None:
+                    raise ValueError("native-local requires --native-python and --native-checkout")
+                owner = LocalRuntime(native_python, native_checkout, native_runs, device=native_device, port=native_port, startup_timeout=native_startup_timeout)
+            else:
+                url = urlsplit(native_server)
+                if (url.scheme != "http" or url.hostname not in {"127.0.0.1", "::1"}
+                    or url.username is not None or url.password is not None
+                    or url.path not in {"", "/"} or url.query or url.fragment
+                    or (url.port is not None and not 1 <= url.port <= 65535)):
+                    raise ValueError("native server must be a numeric loopback HTTP origin")
+                owner = nullcontext()
+            with owner as runtime:
+                base = runtime.base_url if runtime else native_server.rstrip("/")
+                if runtime:
+                    typer.echo(f"Owned native runtime: {runtime.run_dir}")
+                with httpx.Client(base_url=base, trust_env=False, follow_redirects=False, timeout=30) as client:
+                    downloaded = generate(client, upload_image, out_dir, timeout=timeout, poll_interval=poll_interval, client_id=client_id,
+                        model=native_model, camera_angle=native_camera_angle,
+                        mesh_seed=42 if mesh_seed is None else mesh_seed,
+                        texture_seed=43 if texture_seed is None else texture_seed,
+                        target_face_num=80000 if target_face_num is None else target_face_num,
+                        filename_prefix=filename_prefix or "remesher")
+            for path in downloaded:
+                typer.echo(f"Downloaded {path}")
+            return
+        except httpx.HTTPError:
+            raise typer.BadParameter("Native HTTP request failed; inspect server logs (no legacy fallback).") from None
+        except (ValueError, TypeError, KeyError, RuntimeError, OSError) as exc:
+            raise typer.BadParameter(str(exc)) from None
 
     prompt = _load_prompt_from_file(workflow_file)
     uploaded_image_ref = _upload_input_image(base, upload_image)

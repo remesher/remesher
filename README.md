@@ -20,20 +20,24 @@ An agent harness that uses a small Typer CLI to submit ComfyUI API prompts, stre
 
 ---
 
-## Native ComfyUI investigation (optional, preflight only)
+## Native ComfyUI (optional, experimental)
 
-For core TRELLIS.2/Pixal3D without Comfy3D, see the
-[native backend feasibility and acceptance gates](docs/native-comfy-backend.md).
-A read-only inventory check is available against an operator-managed local server:
+`image-to-glb --backend native` submits a native single-image TRELLIS.2/Pixal3D
+API graph to an existing loopback server. `--backend native-local` additionally
+launches and cleans up an owned local ComfyUI child using an explicitly supplied
+Python executable and checkout. Nothing is automatically installed or downloaded.
+See [native backend usage and acceptance gates](docs/native-comfy-backend.md)
+for launcher arguments, workflow scope, model prerequisites and limitations.
+
+A separate read-only combined-editor inventory check remains available:
 
 ```sh
 uv run python -m comfy_prompt_cli.native_preflight --server http://127.0.0.1:8188
 ```
 
-This is **not a generation backend or local launcher yet**. Exit 0 means only
-that the pinned combined editor-template inventory matches, not that models,
-hardware, or an API workflow have been validated. Existing generation defaults
-and legacy workflows are unchanged.
+Neither inventory success nor protocol-fixture tests certify GPU inference.
+Real native generation/hardware acceptance remains open. Comfy3D remains the
+default; legacy workflows, rigging and animation paths are unchanged.
 
 ## Requirements
 

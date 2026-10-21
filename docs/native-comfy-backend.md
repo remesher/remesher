@@ -1,19 +1,25 @@
-# Native ComfyUI backend: feasibility and bounded first slice
+# Optional native ComfyUI backend
 
-## Decision
+## Decision and current scope
 
-Add an **optional backend**, not a fork or replacement for the existing Comfy3D
-workflow. This change provides a read-only, executable native inventory preflight.
-It does **not** add local process management or enable native generation in
-`image-to-glb`. Legacy configuration, templates, rigging, and Docker paths are
-unchanged. No models, packages, environments, or GPU resources are provisioned.
+The legacy **Comfy3D backend remains the default**. `image-to-glb` now also has
+explicit experimental `--backend native` (existing loopback server) and
+`--backend native-local` (owned foreground child) routes. These call a real
+API-format native graph, upload an image, submit `/prompt`, poll the submitted
+ID's `/history`, and retrieve `SaveGLB`'s `3d` artifacts through `/view`.
+There is no fallback to Comfy3D on native failure.
 
-The official editor workflow and core node interfaces exist. However, this
-investigation did not obtain and execute an equivalent **API-format** workflow
-with Remesher's input overrides and GLB output handling. That is the gate for a
-native generation backend, not grounds to silently substitute node names in
-`examples/img_to_trellis2.json`. The downloaded official graph contains editor
-widgets, switch/lazy branches, previews and save nodes; it is not `/prompt` JSON.
+The implementation is **not GPU generation certification**. Process lifecycle,
+installed CLI dispatch and HTTP/artifact handling are tested with disposable
+processes and explicitly labeled protocol fixtures. Successful fixture downloads
+do not demonstrate inference or output quality. Native stage execution on Spark
+and CPU/MPS/ROCm remains a separate acceptance gate.
+
+No models, packages, environments, or GPU resources are automatically provisioned.
+The user must explicitly supply an existing interpreter, checkout and weights.
+The old read-only preflight remains available independently; its combined-editor
+inventory is broader than the minimal generation graph and is not used as a
+misleading generation-success signal.
 
 ## Reproducible inventory check
 
@@ -44,8 +50,8 @@ exact-template inventory. A 404 model folder is reported as missing models.
 Only three conditioning/stage schemas are checked; `schema_scope` enumerates
 them. Other nodes are presence checks, **not** a full workflow compatibility test.
 `server_stats` is reported verbatim and must not be interpreted as a successful
-GPU inference probe. Custom nodes can shadow core names; independently launching
-with custom nodes disabled remains a later acceptance requirement.
+GPU inference probe. Custom nodes can shadow core names on an operator-managed
+server; the `native-local` launcher disables them for its own child.
 
 ## Sources and exact findings
 
@@ -118,34 +124,94 @@ not establish every dtype, quantization kernel or operation on every device.
 | Apple MPS | No MPS host or stage execution | Not validated |
 | AMD ROCm | No ROCm host or stage execution | Not validated |
 
-The existing Spark endpoint on port 8188 was unavailable to this preflight.
-No ComfyUI or torch install, model download, native server launch, or generation
-was attempted. Local ARM64 tests are **client validation only**, not native 3D
-hardware certification. CI/CD promotion must wait for native ARM64/Spark
-acceptance; this change does not modify CI or Docker.
+In the initial preflight investigation the Spark endpoint on port 8188 was
+unavailable. That investigation did not install dependencies, fetch weights,
+launch native ComfyUI, or generate a mesh. The added lifecycle/protocol tests
+are still **client validation only**, not native 3D hardware certification.
+CI/CD promotion must wait for native ARM64/Spark acceptance; this change does
+not modify CI or Docker.
 
-## Next slice: explicit local runtime and acceptance gates
+## Experimental generation and owned launcher
 
-Keep `server_url`/legacy defaults. Add a separate opt-in `native-local` runtime
-configuration: absolute existing Python executable, absolute existing ComfyUI
-checkout, private input/output/user directories, loopback port, and explicit
-device policy. No automatic environment creation, dependencies or model fetches.
+Existing trusted local server (custom nodes may shadow names; the operator owns
+its configuration and cancellation):
 
-A foreground owner should launch an argv list (no shell), use `--listen
-127.0.0.1`, `--disable-all-custom-nodes`, and dedicated directory flags verified
-against the pinned CLI. Never attach to a busy port or treat another server's
-health response as proof of child readiness. Require both owned child liveness
-and the intended server identity. Startup failure, cancellation and shutdown
-must terminate only the owned process/group, with bounded wait/escalation. Avoid
-PID files as kill authority and never use `pkill` or system-wide interruption.
-Test this lifecycle with real disposable processes before launching ComfyUI.
+```sh
+comfy-prompt-cli image-to-glb --backend native \
+  --native-server http://127.0.0.1:8188 --image prepared-object.png \
+  --mesh-seed 42 --texture-seed 43 --target-face-num 80000 --out-dir downloads
+```
 
-Then export and inspect a minimal single-image **API** graph from the pinned
-native installation, validate all inputs/outputs against live `object_info`,
-map user overrides by backend (fail unsupported ones), and verify `/history`
-GLB discovery plus path-safe artifact download. Test structure sampling, shape
-sampling/decoding, texture sampling/decoding, postprocess/UV/PBR and GLB export
-separately on Spark; record Python/torch/device/dtype/model hashes, memory,
-timing and output files. Repeat that stage matrix independently for CPU, MPS or
-ROCm before claiming support. Only then connect native generation to the CLI or
-consider default changes. Existing rigging/animation tests remain separate gates.
+Owned local server (replace the explicit absolute paths with existing resources):
+
+```sh
+comfy-prompt-cli image-to-glb --backend native-local \
+  --native-python /absolute/venv/bin/python \
+  --native-checkout /absolute/ComfyUI --native-runs ./native-runs \
+  --native-device cuda --image prepared-object.png --out-dir downloads
+```
+
+`native-local` currently requires POSIX and the main thread. It starts an argv
+list, no shell, on numeric loopback, with custom and partner/API nodes disabled.
+Input/output/temp/user directories are private to a unique run. Model discovery
+uses the explicitly selected checkout's existing model configuration. The launcher
+does not create a model directory, run pip, download weights or copy secrets.
+`--native-port 0` selects an unused port; explicit occupied ports are rejected.
+Readiness requires both child liveness and exact `/system_stats.system.argv`
+identity (including the unique directories), so a bind race cannot silently
+attach to another listener. This identity check is not authentication against a
+malicious local process. Startup timeout is configurable.
+
+Normal return, exceptions, Ctrl-C and SIGTERM terminate only the owned process
+group, with TERM then bounded KILL escalation and child reaping. SIGKILL or host
+failure cannot run Python cleanup. Logs and runtime files are retained under the
+printed run directory for diagnosis; remove those directories yourself when no
+longer needed. The server is not daemonized and does not survive the command.
+No PID file, `pkill`, global `/interrupt` or unrelated-server termination is used.
+For an existing `native` server, a client timeout leaves the job under operator
+control; inspect the reported prompt ID. Poll deadlines do not preempt an in-flight
+HTTP operation (30-second inactivity timeout).
+
+### Exact workflow scope
+
+`examples/img_to_native_trellis2.json` is a plain API-format example;
+`native_backend.build_prompt` builds the equivalent graph and maps native
+image/seed/face-count/prefix overrides. The source interfaces were rechecked at
+`7a28332047b6af638dc6c7f72ef3481a718769fd`, including `nodes_custom_sampler.py`
+(`CFGOverride`), `nodes_save_3d.py` (`SaveGLB`), `_io.py` (dynamic combo wire values)
+and `_ui.py` (`Saved3DModels` emits **`3d`**, not a legacy files key).
+
+The bounded preset is **512-resolution shape / 1024 texture atlas**:
+DINO conditioning → structure sampling/decoding → shape sampling/decoding →
+texture sampling/decoding → midpoint decimation → UV unwrap → base-color,
+metallic and roughness bake → texture attachment → SaveGLB. It deliberately
+omits the official editor's 1536 upsample, remesh, AO and normal-map branches.
+Supply a clean, cropped object image; automatic background removal/cropping and
+MoGe estimation are not included. `--subject-scale` padding still applies before
+upload if explicitly requested.
+
+`--native-model pixal3d --native-camera-angle 49.13` selects the single-image
+Pixal3D branch; the API input is `camera_angle_x`, not its `fov` display label.
+The default is `trellis2`. Native uses its own graph and rejects a custom legacy
+`--workflow-file`; the legacy `config.json`/server defaults are not changed.
+This preset requires only its selected diffusion model, DINO, and both VAEs
+from the table above, not the unselected diffusion model, BiRefNet or MoGe.
+
+Before upload/queue, `/object_info` checks required keys, link slot/types, numeric
+bounds, enums/model filenames and dynamic option keys. LoadImage's existing-file
+enum is intentionally deferred until after upload to ComfyUI's own `/prompt`
+validation. Model presence is not a content/hash or hardware check. Missing
+capabilities fail explicitly, with no backend substitution. Download handling
+only reads the graph's SaveGLB `3d` output, rejects traversal/non-output references,
+uses fresh local filenames (no overwrite), streams at most 512 MiB per file and
+checks GLB v2 magic/version/declared length. This is transport integrity, not mesh
+quality or geometry validation.
+
+### Remaining acceptance gates
+
+Run actual native structure, shape, texture, postprocess/UV/PBR and export on
+Spark, retaining Python/torch/device/dtype/model hashes, timing/memory, server
+history and generated mesh inspection. Repeat independently for CPU, MPS or
+ROCm before claiming hardware support. The absence of custom CUDA extensions
+alone is insufficient. Rigging, skinning, retargeting and animation parity remain
+separate gates; existing Comfy3D workflows and tests are preserved.
