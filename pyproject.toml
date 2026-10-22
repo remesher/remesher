@@ -3,12 +3,16 @@ name = "comfy-prompt-cli"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
     { name = "Michael Gold", email = "goldmichael@gmail.com" }
 ]
 requires-python = ">=3.11"
 dependencies = [
     "httpx>=0.28.1",
+    # Artifact deadlines use the exercised httpcore trace event contract.
+    "httpcore==1.0.9",
     "pillow>=11.0.0",
     "pydantic>=2.12.5",
     "typer[all]>=0.24.1",

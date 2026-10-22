@@ -1,0 +1,17 @@
+name: remesher
+version: "0.2.1"
+requires_hermes: ">=0.22.2"
+# Owner-approved license for Remesher code; third-party materials retain their terms.
+license: "Apache-2.0"
+homepage: https://github.com/remesher/remesher
+platforms: [linux]
+provides_hooks: []
+provides_middleware: []
+requires_env: []
+description: Bounded image-to-GLB jobs through an isolated Remesher CLI with comfy3d, native and native-local backends.
+author: Remesher
+provides_tools:
+  - remesher_health
+  - remesher_generate
+  - remesher_job
+  - remesher_assets

@@ -171,12 +171,14 @@ uv run comfy-prompt-cli skin-cleanup-glb \
 
 ### 7. Retarget animation
 
-Apply a Mixamo FBX animation to a cleaned rigged GLB:
+Optionally apply your own compatible FBX animation to a cleaned rigged GLB.
+No third-party animation is bundled or downloaded. Supply an FBX you have rights
+to use; the path below is a placeholder for your local file:
 
 ```bash
 uv run comfy-prompt-cli retarget-glb \
   --rigged-glb downloads/lab/wrestler_rigged_headfix.glb \
-  --animation workspace/input/animation_templates/mixamo/Mma_Kick.fbx \
+  --animation workspace/input/uploads/my_animation.fbx \
   --glb-name wrestler_kick \
   --out-dir downloads/lab
 ```
@@ -246,7 +248,7 @@ Lab 1 is the baseline end-to-end walkthrough after Lab 0 has configured the pod,
 4. Use that image, or an uploaded `/workspace/input/character.png`, as the input to `image-to-glb`.
 5. Rig the generated GLB with `rig-glb` and `--embed-textures`.
 6. Run conservative `skin-cleanup-glb` for `head_top,head_neck`.
-7. Retarget the cleaned rigged GLB with the default `Mma_Kick.fbx` animation.
+7. Optionally set `KICK_ANIMATION_FBX_OVERRIDE` to your own FBX and retarget. Without it, keep the rigged GLB for export.
 8. Preview GLB outputs in the notebook with the embedded `<model-viewer>` helper.
 9. Export the animated GLB to USDZ with `comfy-prompt-cli glb-to-usdz`.
 
@@ -289,7 +291,7 @@ Lab 2 starts from the included pencil sketch and shows how Qwen image editing ca
 7. Preview the generated GLB.
 8. Run `rig-glb` with `--embed-textures`.
 9. Run conservative `skin-cleanup-glb` on the head/top zones.
-10. Retarget the cleaned rigged GLB with the default Mixamo `Mma_Kick.fbx` animation.
+10. Optionally set `KICK_ANIMATION_FBX_OVERRIDE` to your own FBX and retarget; otherwise this step is skipped.
 11. Preview the animated GLB in the notebook.
 
 ### Expected outputs
@@ -315,7 +317,7 @@ Lab 3 replaces the canned sketch with upload widgets so you can test your own ch
 
 - Upload a custom `.png`, `.jpg`, `.jpeg`, or `.webp` character image.
 - Optionally upload a custom `.fbx` animation.
-- Use the default Mixamo `Mma_Kick.fbx` if no animation is uploaded.
+- Skip retargeting and keep the rigged GLB if no animation is uploaded.
 - Run the same image-to-GLB, rigging, cleanup, and retarget pipeline on user-provided inputs.
 
 ### Main steps
@@ -328,7 +330,7 @@ Lab 3 replaces the canned sketch with upload widgets so you can test your own ch
 6. Preview the uploaded image and confirm which FBX will be used.
 7. Run `image-to-glb` with a filename prefix based on the uploaded image name.
 8. Run `rig-glb` and conservative head-weight cleanup.
-9. Run `retarget-glb` using the uploaded FBX or the default `Mma_Kick.fbx`.
+9. Optionally run `retarget-glb` using the uploaded FBX. No upload means retargeting is skipped.
 10. Preview and download the animated GLB.
 
 ### Expected outputs

@@ -4,6 +4,15 @@ An agent harness that uses a small Typer CLI to submit ComfyUI API prompts, stre
 
 ---
 
+## License
+
+Remesher's own code is licensed under **Apache-2.0**; see [LICENSE](LICENSE).
+This grant does not cover third-party code/dependencies, runtimes, model weights,
+input assets or generated outputs. MichaelGold confirmed ownership and rights
+for the preserved demo sketch; the third-party Mixamo FBX is no longer bundled.
+Neither action extends the code license to assets. See
+[license scope and distribution checks](docs/licensing.md).
+
 ## What it does
 
 - Reads ComfyUI server URL from `config.json`
@@ -20,6 +29,41 @@ An agent harness that uses a small Typer CLI to submit ComfyUI API prompts, stre
 
 ---
 
+## Native ComfyUI (optional, experimental)
+
+Start with [native client/runtime/plugin installation and explicit quality recipes](docs/native-installation.md).
+See the [release task index](docs/release-readiness.md) for implementation,
+review, exact-head CI, installation and Spark acceptance states.
+
+`image-to-glb --backend native` submits a native single-image TRELLIS.2/Pixal3D
+API graph to an existing loopback server. `--backend native-local` additionally
+launches and cleans up an owned local ComfyUI child using an explicitly supplied
+Python executable and checkout. Nothing is implicitly installed or downloaded.
+Agents can explicitly configure a pinned TRELLIS runtime with JSON-producing
+`comfy-prompt-cli native-setup plan|check|apply`; installation and model downloads
+require separate opt-ins. Saved setup config feeds `image-to-glb --backend
+native-local --native-config /absolute/native-setup.json`. See the
+[setup CLI/plugin contract and acceptance task index](docs/native-setup.md).
+See [native backend usage and acceptance gates](docs/native-comfy-backend.md)
+for launcher arguments, workflow scope, model prerequisites and limitations.
+The opt-in [512-to-1536 shape cascade](docs/native-shape-cascade.md) preserves
+512 defaults and does not change repair/atlas settings. See the
+[controlled wrestler result](docs/pixal1536-acceptance.md) for provisional quality,
+resource evidence and remaining independent-review gate.
+The separate [repair768 / atlas4096 controls and experiment](docs/native-repair-atlas.md)
+retain old defaults; sharper detail does not fix the inferred back or fused hands.
+
+A separate read-only combined-editor inventory check remains available:
+
+```sh
+uv run python -m comfy_prompt_cli.native_preflight --server http://127.0.0.1:8188
+```
+
+Neither inventory success nor protocol-fixture tests certify GPU inference.
+Historical native generation passed on Linux ARM64 NVIDIA Spark, with provisional
+visual quality; other hardware and production manifold output are not certified.
+Comfy3D remains the default; legacy workflows, rigging and animation paths are unchanged.
+
 ## Requirements
 
 - Python + [`uv`](https://docs.astral.sh/uv/)
@@ -33,7 +77,8 @@ An agent harness that uses a small Typer CLI to submit ComfyUI API prompts, stre
 ## Quick start
 
 ```bash
-cd /Users/mg/.openclaw/workspace/comfy-prompt-cli
+git clone https://github.com/remesher/remesher.git
+cd remesher
 uv sync
 uv run comfy-prompt-cli config init --force
 ```

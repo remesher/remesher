@@ -1,0 +1,80 @@
+{
+  "comfyui_revision": "7a28332047b6af638dc6c7f72ef3481a718769fd",
+  "template_revision": "d0e41fe5423f93db5b5872cf273d7b1af8aa68bc",
+  "template_path": "templates/3d_pixal3d_trellis2_image_to_model.json",
+  "nodes": [
+    "ApplyTextureToMesh",
+    "BakeAmbientOcclusion",
+    "BakeNormalMapFromMesh",
+    "BakeTextureFromVoxel",
+    "CFGOverride",
+    "CLIPVisionLoader",
+    "ComfySwitchNode",
+    "DecimateMesh",
+    "EmptyTrellis2LatentStructure",
+    "GetMeshInfo",
+    "ImageCropToMask",
+    "KSampler",
+    "LoadBackgroundRemovalModel",
+    "LoadImage",
+    "LoadMoGeModel",
+    "MaskPreview",
+    "MeshSmoothNormals",
+    "MeshToFile3D",
+    "MoGeGeometryToFOV",
+    "MoGeInference",
+    "ModelSamplingSD3",
+    "PaintMesh",
+    "Pixal3DConditioning",
+    "Preview3DAdvanced",
+    "PreviewImage",
+    "PrimitiveBoolean",
+    "PrimitiveInt",
+    "RemeshMesh",
+    "RemoveBackground",
+    "RenderUVAtlas",
+    "RescaleCFG",
+    "Save3DAdvanced",
+    "Trellis2Conditioning",
+    "Trellis2ShapeStage",
+    "Trellis2TextureStage",
+    "Trellis2UpsampleStage",
+    "UNETLoader",
+    "UnwrapMesh",
+    "VAELoader",
+    "VaeDecodeShapeTrellis",
+    "VaeDecodeStructureTrellis2",
+    "VaeDecodeTextureTrellis",
+    "VoxelToMesh"
+  ],
+  "models": [
+    [
+      "background_removal",
+      "birefnet.safetensors"
+    ],
+    [
+      "clip_vision",
+      "dino_v3_L_naf_fp32.safetensors"
+    ],
+    [
+      "diffusion_models",
+      "pixal3d_int8_convrot.safetensors"
+    ],
+    [
+      "diffusion_models",
+      "trellis_2_int8_convrot.safetensors"
+    ],
+    [
+      "geometry_estimation",
+      "moge_2_vitl_normal_fp16.safetensors"
+    ],
+    [
+      "vae",
+      "trellis_2_shape_vae_bf16.safetensors"
+    ],
+    [
+      "vae",
+      "trellis_2_texture_vae_bf16.safetensors"
+    ]
+  ]
+}

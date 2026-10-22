@@ -40,7 +40,7 @@ WORKDIR /app
 
 COPY docker-example/runpod/entrypoint.sh /app/runpod/entrypoint.sh
 COPY docker-example/runpod/download_models.py /app/runpod/download_models.py
-COPY README.md pyproject.toml uv.lock config.json.example /app/remesher/
+COPY README.md LICENSE pyproject.toml uv.lock config.json.example /app/remesher/
 COPY src /app/remesher/src
 COPY examples /app/remesher/examples
 COPY notebooks /app/remesher/notebooks
