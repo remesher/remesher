@@ -55,6 +55,13 @@ Required contexts to consider for main protection: `Focused lint`,
 CI runs hosted Ubuntu CPU fixtures only, never model inference or GPU downloads.
 The SDK job checks out the pinned upstream revision separately and installs only
 its lightweight validation dependencies. It does not mutate any live Hermes home.
+First hosted execution exposed two runner assumptions: absent `$HOME/.cache`
+and Rich forcing ANSI formatting under `GITHUB_ACTIONS`. The wheel harness now
+creates its scratch parent (preferring `TMPDIR`/`RUNNER_TEMP`), preserves JUnit
+on failure, and CI uses plain terminal output (`TERM=dumb`, `NO_COLOR=1`). Both
+failures were reproduced and the complete local partitions rerun successfully;
+no tests were skipped or assertions weakened. Exact-head hosted rerun remains
+the authoritative CI gate.
 
 ## Actual historical hardware evidence (not fresh exact-head claims)
 

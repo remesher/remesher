@@ -3,8 +3,25 @@
 # This is not model inference. Never installs NVIDIA packages/downloads models.
 set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-work=$(mktemp -d "${TMPDIR:-$HOME/.cache}/remesher-native-wheel.XXXXXX")
-trap 'rm -rf -- "$work"' EXIT HUP INT TERM
+scratch=${TMPDIR:-${RUNNER_TEMP:-$HOME/.cache}}
+mkdir -p "$scratch"
+work=$(mktemp -d "$scratch/remesher-native-wheel.XXXXXX")
+cleanup() {
+  status=$?
+  trap - EXIT HUP INT TERM
+  if [ -n "${REMESHER_CI_REPORT_DIR:-}" ]; then
+    mkdir -p "$REMESHER_CI_REPORT_DIR"
+    for report in "$work/package.xml" "$work/plugin.xml"; do
+      if [ -f "$report" ]; then cp "$report" "$REMESHER_CI_REPORT_DIR/"; fi
+    done
+  fi
+  rm -rf -- "$work"
+  exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 uv build --wheel --out-dir "$work/dist" "$repo"
 uv venv "$work/venv" --python "${REMESHER_TEST_PYTHON:-3.13}"
 uv pip install --python "$work/venv/bin/python" "$work"/dist/*.whl pytest==9.1.1 pytest-subtests==0.15.0
@@ -30,7 +47,3 @@ done
 "$work/venv/bin/python" -I -m pytest -q "$repo/integrations/hermes/tests" --junitxml="$work/plugin.xml"
 "$work/venv/bin/python" "$repo/scripts/verify-test-report.py" "$work/plugin.xml"
 uv pip check --python "$work/venv/bin/python"
-if [ -n "${REMESHER_CI_REPORT_DIR:-}" ]; then
-  mkdir -p "$REMESHER_CI_REPORT_DIR"
-  cp "$work/package.xml" "$work/plugin.xml" "$REMESHER_CI_REPORT_DIR/"
-fi

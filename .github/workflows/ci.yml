@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# Rich/Typer otherwise force ANSI styles on GitHub, splitting literal CLI flags
+# in help-text assertions. Test plain terminal output without weakening checks.
+env:
+  TERM: dumb
+  NO_COLOR: '1'
+
 concurrency:
   group: remesher-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
