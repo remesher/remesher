@@ -21,7 +21,7 @@ RUN python -m pip install --upgrade pip \
 
 WORKDIR /workspace/remesher
 
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock README.md LICENSE ./
 COPY src ./src
 COPY examples ./examples
 COPY config.json.example ./config.json.example

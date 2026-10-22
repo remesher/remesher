@@ -100,8 +100,8 @@ HERMES_HOME=/absolute/disposable-hermes hermes plugins install \
 This is a custom-source install, not catalog admission. It includes the scripts
 and skills; start a fresh session in that home. For evaluation use a new
 disposable directory; do not mutate your active profile or its Python packages.
-Hermes 0.22.2 is the validated SDK floor. License is currently explicitly
-UNLICENSED pending the owner's decision; see the bundled
+Hermes 0.22.2 is the validated SDK floor. Remesher code is licensed
+Apache-2.0 by owner decision; third-party materials retain their terms. See the bundled
 [catalog preparation notes](../integrations/hermes/CATALOG.md).
 
 Publish settings with the bundled configuration script:

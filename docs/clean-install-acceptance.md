@@ -42,4 +42,6 @@ acceptance host at:
 `/home/mg/remesher-native-runtime/release-install-acceptance/REPORT.md`,
 `provenance.json`, `verification.json`, and model-specific subdirectories.
 Large models/GLBs are deliberately not committed. Final source review, canonical
-CI, license choice, merge and distribution remain separate release-owner gates.
+CI, merge and distribution remain separate release-owner gates. The subsequent
+owner choice of Apache-2.0 resolves only the first-party code license gate; it
+does not clear third-party asset redistribution (see `licensing.md`).

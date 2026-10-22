@@ -1,8 +1,8 @@
 name: remesher
 version: "0.2.1"
 requires_hermes: ">=0.22.2"
-# No license grant exists in this repository; owner must decide before catalog submission.
-license: "UNLICENSED"
+# Owner-approved license for Remesher code; third-party materials retain their terms.
+license: "Apache-2.0"
 homepage: https://github.com/remesher/remesher
 platforms: [linux]
 provides_hooks: []

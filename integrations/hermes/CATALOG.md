@@ -20,10 +20,13 @@ code alone does not certify macOS, Windows, MPS, ROCm or CPU model execution.
 
 ## License decision is explicit, not inferred
 
-No repository LICENSE grant existed at integration time (also no GitHub-detected
-license). `license: "UNLICENSED"` truthfully records that state; this patch does
-**not** invent an MIT/Apache grant. The repository owner must decide and publish
-license terms before distribution/catalog submission. No Meshy source is copied.
+The repository owner explicitly selected **Apache-2.0 for Remesher own code**.
+The repository and this plugin directory include the exact Apache License 2.0
+text as `LICENSE`; package and plugin metadata use SPDX `Apache-2.0`.
+This grant does not relicense third-party code, runtimes, model weights, input
+assets or generated outputs. No Meshy source is copied. Repository
+`docs/licensing.md` records the scoped source/asset inspection and outstanding
+asset-provenance gate; this is not exhaustive legal review.
 
 ## Preparing a catalog entry (not submitting one)
 
@@ -32,7 +35,8 @@ Hermes catalog PR with:
 
 - repo `https://github.com/remesher/remesher`, subdir `integrations/hermes`;
 - the actual full 40-character reviewed commit SHA, not a branch/tag/placeholder;
-- matching plugin version `0.2.1`, `requires_hermes: ">=0.22.2"`, category `tools`,
+- matching plugin version `0.2.1`, `license: "Apache-2.0"`,
+  `requires_hermes: ">=0.22.2"`, category `tools`,
   tier `community` (only Nous assigns official/verified), platforms `[linux]`;
 - the exact four tool names above and empty hook/middleware/required-env lists;
 - disclosure of local subprocesses, detached supervisors, local image reads and
@@ -48,7 +52,8 @@ four-tool registration, namespaced skill discovery, unconfigured health and
 normal-config model routing. Test update persistence on disposable job data
 only, with no active worker; never update the live profile as an admission test.
 Passing validation is not catalog approval: maintainers review and merge the
-catalog entry separately. License and final review remain owner gates.
+catalog entry separately. First-party license selection is resolved; final review,
+third-party distribution clearance and catalog admission remain separate gates.
 
 ## Meshy reference and scope
 

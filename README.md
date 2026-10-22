@@ -4,6 +4,14 @@ An agent harness that uses a small Typer CLI to submit ComfyUI API prompts, stre
 
 ---
 
+## License
+
+Remesher's own code is licensed under **Apache-2.0**; see [LICENSE](LICENSE).
+This grant does not cover third-party code/dependencies, runtimes, model weights,
+input assets or generated outputs. In particular, the bundled Mixamo FBX and
+sketch image are not licensed by this code grant; their redistribution clearance
+remains outstanding. See [license scope and distribution checks](docs/licensing.md).
+
 ## What it does
 
 - Reads ComfyUI server URL from `config.json`

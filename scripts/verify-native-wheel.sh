@@ -35,6 +35,22 @@ export REMESHER_TEST_CLI="$work/venv/bin/comfy-prompt-cli"
 export REMESHER_TEST_NATIVE_CLI="$REMESHER_TEST_CLI"
 export REMESHER_TEST_NATIVE_PYTHON="$work/venv/bin/python"
 "$work/venv/bin/python" -I -c 'from pathlib import Path; import comfy_prompt_cli; assert "site-packages" in Path(comfy_prompt_cli.__file__).parts; print(comfy_prompt_cli.__file__)'
+# Inspect the installed distribution, not source metadata or an editable install.
+"$work/venv/bin/python" -I - <<'PY'
+import hashlib
+from importlib.metadata import distribution
+
+dist = distribution("comfy-prompt-cli")
+assert dist.metadata["License-Expression"] == "Apache-2.0"
+assert dist.metadata.get_all("License-File") == ["LICENSE"]
+licenses = [p for p in dist.files if str(p).endswith(".dist-info/licenses/LICENSE")]
+assert len(licenses) == 1, licenses
+installed = dist.locate_file(licenses[0])
+assert "site-packages" in installed.parts
+assert hashlib.sha256(installed.read_bytes()).hexdigest() == "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+assert not any(str(p).startswith("workspace/") for p in dist.files)
+print(f"Installed license verified: {installed}; License-Expression: Apache-2.0; License-File: LICENSE")
+PY
 for model in trellis2 pixal3d; do
   "$REMESHER_TEST_CLI" native-setup plan --root "$work/proposed-$model" --model "$model" > "$model.json"
 done

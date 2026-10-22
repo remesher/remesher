@@ -240,7 +240,10 @@ that this is a custom, unreviewed source, not a catalog listing. Select
 `remesher:remesher`. Never overwrite/update a plugin while jobs are active.
 Manual copying of the entire directory remains possible for controlled local
 validation. See [catalog preparation and compatibility](CATALOG.md); admission
-and license approval are separate from passing the validator.
+remains separate from passing the validator. The owner selected Apache-2.0 for
+Remesher code; the full license is bundled as `LICENSE` in this plugin directory.
+This does not license external runtimes, model weights, generated outputs or
+third-party code/assets, which retain their own terms.
 
 From the repository root:
 

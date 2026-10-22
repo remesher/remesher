@@ -3,6 +3,8 @@ name = "comfy-prompt-cli"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
     { name = "Michael Gold", email = "goldmichael@gmail.com" }
 ]
