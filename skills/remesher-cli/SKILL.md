@@ -18,7 +18,7 @@ comfy-prompt-cli native-setup plan --root /absolute/native-runtime
 comfy-prompt-cli native-setup check --config /absolute/native-setup.json
 # Only after explicit package and 8,512,567,756-byte core model approval:
 comfy-prompt-cli native-setup apply --root /absolute/native-runtime --allow-install --allow-download
-comfy-prompt-cli image-to-glb --backend native-local --native-config /absolute/native-runtime/native-setup.json --image /absolute/prepared-object.png
+comfy-prompt-cli image-to-glb --backend native-local --native-config /absolute/native-runtime/native-setup.json --image /absolute/prepared-object.png --native-preset quality-1536-solid768
 ```
 
 Exit 0 means plan produced or setup ready, 1 means blockers, 2 means invalid/failed
@@ -34,9 +34,24 @@ Never raise or escape cgroup limits silently: insufficient effective memory mean
 obtain approval for a sufficiently sized bounded scope, then re-check. The
 invocation-only low-memory override acknowledges risk and does not raise limits.
 Model downloads resume/reuse only after exact size/SHA256 verification; no generic
-URLs or manifest overrides. No Pixal3D diffusion download: Pixal3D acceptance is
-deferred until TRELLIS is green end-to-end. See `docs/native-setup.md` for the
+URLs or manifest overrides. Both native models have single-image acceptance;
+quality remains provisional. Recommend the explicit quality preset (1536 shape,
+solid768, atlas4096, no decimation or precluster cap, smooth normals) only with
+approval for its resource cost. Use `--native-preset fast` for a bounded smoke;
+omitting a preset preserves old defaults. Presets reject contradictory flags.
+See `docs/native-setup.md` for the
 complete executable plugin contract, isolation limits, and acceptance task index.
+
+## Fixed-mesh export verification
+
+For shading/export-only changes, do not regenerate or re-unwrap the asset.
+Run `scripts/verify-native-normals.py` with the existing native runtime Python,
+installed CLI wheel, pinned checkout and immutable final GLB into a new output
+directory. It runs the candidate's normal node and SaveGLB serializer on CPU,
+then checks actual NORMAL accessors, unit/finite values and exact positions,
+indices, UVs, material JSON and texture pixels. Compare textured and gray
+front/rear/side renders that actually consume exported normals. This is export
+acceptance, not new model inference or topology/manifold certification.
 
 ## Environment (legacy demo container only)
 

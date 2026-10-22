@@ -7,6 +7,15 @@ status is not the current merge queue. Install one integrated revision using
 
 ## Source and reconciliation
 
+- Final premerge normals/preset delta is described in
+  [native quality and explicit normals](native-quality-normals.md). It adds the
+  named `quality-1536-solid768` opt-in and smooth exported NORMAL, preserving
+  legacy invocation defaults. Recommended native agent configuration selects
+  quality explicitly. This supersedes recipe-only/512 baseline guidance, not
+  the historical source IDs below. Both saved final wrestler meshes were
+  re-exported on CPU with unchanged positions/indices/UVs/materials; no new
+  full model generation or reference-parity claim is made.
+
 - Authoritative main at consolidation: `30f1a95ca62935d0a6cb9d3b01c7b51b0a65f8aa`.
 - Integrated source tip: `1356297d1977f079d008cb285d275171854bb8cc`.
 - Fetched all source PR heads. Both original native and Hermes branches are
@@ -29,10 +38,11 @@ status is not the current merge queue. Install one integrated revision using
 | Native TRELLIS.2 and Pixal3D graphs, model setup and MoGe selection | Yes | Existing full CPU suite + separate historical Spark evidence below |
 | Per-job setup snapshots, model paths and plugin storage isolation | Yes | Real installed CLI/plugin HTTP/process contracts; no source import fallback |
 | No-decimation, portable repair, 1536 cascade, repair768/atlas4096 | Yes | Existing graph/CLI/plugin tests and controlled historical experiments |
+| Named quality/fast presets and explicit final NORMAL | Yes | Actual fixed-mesh CPU native exporter regressions on both accepted final GLBs; finite unit normals, exact geometry/UV/material preservation; CLI/plugin conflict/precedence tests. See [evidence](native-quality-normals.md). Final exact-head CI/review remains a gate |
 | Setup child cancellation and absolute artifact deadline | Yes | Real subprocess cancellation + trickling HTTP regressions |
 | Canonical hosted CPU CI | Yes | `.github/workflows/ci.yml`: exact-head remote conclusion required before merge; never infer it from local results |
 | Focused lint | Yes | Fatal correctness on all first-party source/tests/scripts; all Pyflakes rules on native/plugin/new delivery code; no inherited diagnostic suppression |
-| Full test and isolated wheel partitions | Yes | Local full suite **290 passed + 53 subtests, zero skips**; isolated wheel **239 application + 51 plugin tests + 53 subtests, zero skips**. Seven release/packaging guards include exact Apache-2.0 metadata/text and installed-wheel license evidence; the three affected license guards were observed failing before the fixes. Required skips fail the gate |
+| Full test and isolated wheel partitions | Yes | Normals/preset candidate: local **306 passed + 57 subtests, zero skips**; isolated wheel **253 application + 53 plugin tests + 57 subtests, zero skips**. License/packaging guards remain included. Required skips fail the gate; hosted exact-head conclusions are separate |
 | Hermes SDK doctor and validator | Yes | Official v0.22.2 floor `d923a5eb487a17c0a68801bba9ef0f56c81040a8` and installed SDK `9e01b44dd23978f9ff40b7837467f3a9f1582130` passed; CI pins the floor and uses the upstream install-stamp writer for version admission. Real discovery registers four tools, validator passes; missing dependencies are errors |
 | Clean client installation | Yes | Wheel into independent venv, fresh dependencies, imports from site-packages, both model plans, complete CPU suite and plugin contracts; no GPU inference inferred |
 | Fresh normal-config/plugin Spark acceptance | Separate final-source gate | Earlier independent clean archive/client and real Hermes install passed both-model 512/no-repair canaries with existing official weights; [historical scope and receipts](clean-install-acceptance.md). Subsequent lifecycle fixes change executable source: the parallel GPU acceptance owner must bind new receipts to that source. Not fresh CUDA provisioning or 1536 quality |

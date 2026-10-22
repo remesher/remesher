@@ -19,8 +19,15 @@ description: Configure and inspect Remesher setup, generate GLBs from local imag
    (preserve venv symlinks) and `native_checkout` containing `main.py`.
 3. With user authorization, write a **candidate JSON file**, using the README
    schema: `cli`, `backend`, backend-specific settings and optional allowlisted
-   `environment`. Config mode reads `model` (`trellis2` default or `pixal3d`); do not mix `native_config`
-   with explicit runtime paths/device/server. For manual native-local, set
+   `environment`. Config mode reads `model` (`trellis2` default or `pixal3d`).
+   Set `native_preset: quality-1536-solid768` in an approved native settings file
+   for everyday quality generation: shape1536, solid768 repair, atlas4096,
+   no decimation/no precluster cap, bounded filling and explicit smooth normals.
+   Explain the extra memory/time before opting in. Use `native_preset: fast`
+   for explicit 512/no-repair/1024/80000 smoke jobs. Omission preserves old CLI
+   behavior, not the tested quality recipe. Request preset overrides settings
+   preset; explicit scalar controls must agree or the request is rejected.
+   Do not mix `native_config` with explicit runtime paths/device/server. For manual native-local, set
    `native_device` to `cuda` or `cpu`. Never insert shell strings or extra
    arguments. Device/cache variables must be explicit in `environment`; ambient
    CUDA/HF/Torch variables are scrubbed along with Python/uv activation and tokens.
@@ -54,8 +61,9 @@ description: Configure and inspect Remesher setup, generate GLBs from local imag
    the plugin/CLI do not remove backgrounds. Preserve source/mask/prepared images
    and pad enough to retain hands/feet. Do not mistake gray clothing for background.
    Call `remesher_generate` once with absolute PNG/JPEG/WebP `image` (max 20 MiB).
-   Optional `timeout_seconds`: 1–1800, default 900; `target_face_num`: 1000–200000,
-   default 80000. Save the returned job_id. Backend and paths are setup settings,
+   With configured quality, do not pass a face target or old scalar defaults.
+   Optional `timeout_seconds`: 1–1800, default 900. Save the returned job_id.
+   Backend and paths are setup settings,
    not per-call model-controlled tool arguments.
 3. Poll `remesher_job` every few seconds. States are `queued`, `running`,
    `succeeded`, `failed`, `timed_out` or `interrupted`. One active local job per

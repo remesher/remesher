@@ -27,10 +27,14 @@ comfy-prompt-cli native-setup apply --root /absolute/native-runtime \
 # apply saves root/native-setup.json only once checks pass.
 comfy-prompt-cli image-to-glb --backend native-local \
   --native-config /absolute/native-runtime/native-setup.json \
-  --image /absolute/prepared-object.png --mesh-seed 42 --texture-seed 43
+  --image /absolute/prepared-object.png --mesh-seed 42 --texture-seed 43 \
+  --native-preset quality-1536-solid768
 ```
 
 `python -m comfy_prompt_cli.native_setup` is the identical setup interface.
+The generation example explicitly selects the more expensive tested quality
+recipe; use `--native-preset fast` for a smoke. Setup does not silently change
+generation defaults. See [preset controls and precedence](native-installation.md).
 `native-setup --help` prints CLI usage. Use `--root` **or** `--config`, not both.
 A plugin should invoke argv directly, parse JSON stdout, and branch on exit code:
 

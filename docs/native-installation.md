@@ -52,19 +52,30 @@ Protect hands/feet with margins. Camera and cropping can dominate quality.
 
 ## Explicit presets: labels map to real controls, not hidden defaults
 
-These are documented recipes, **not new `--preset` flags**. Runtime config owns
-model/paths/device; generation arguments own quality. Higher settings can cost
-more memory/time and do not necessarily produce a better mesh.
+Select `--native-preset quality-1536-solid768` for the tested single-image
+quality recipe on either model. This is an explicit, expensive opt-in, not a
+silent change to existing invocations. Runtime config owns model/paths/device;
+generation arguments own quality. Higher settings cost more memory/time and
+do not guarantee better anatomy or textures.
 
 | Recipe | Model selection | Shape | Simplification | Repair | UV/PBR atlas |
 |---|---|---:|---|---|---:|
-| Compatibility native | config `model: trellis2` or `pixal3d` | 512 | existing 80000 face target | none | 1024 |
-| Recommended uncapped baseline | either model, separately verified | 512 | `--no-decimation` | `--mesh-repair solid --repair-resolution 512` | 1024 |
-| Detail experiment | Pixal3D tested; TRELLIS needs separate acceptance | `--native-shape-resolution 1536` | `--no-decimation` | `--mesh-repair solid --repair-resolution 768` | `--native-atlas-resolution 4096` |
+| Compatibility native / `--native-preset fast` | either model | 512 | 80000 face target | none | 1024 |
+| Recommended `--native-preset quality-1536-solid768` | either model, separately exercised | 1536 | no decimation | solid768 + bounded fill | 4096 |
 
-The recommended baseline avoids a global face/vertex cap; solid repair can still
-change topology. No hidden vertex limits are introduced. Use `--mesh-repair none`
-for raw-decode/UV diagnostics. Only shape 512/1536 and atlas 1024/4096 are accepted.
+Quality resolves to shape1536, solid repair768, atlas4096, no decimation,
+precluster_max_verts=0, fix_poles=false, smooth_iters=0, component threshold0.005,
+hole perimeter0.03, max_vertices16 **per hole**, fill_chains=false and no pre-weld.
+All native exports now attach explicit smooth normals at 180 degrees after
+material application; positions, indices, UVs and materials are not changed by
+that node. No tangents are needed without a normal map. Repair/unwrap still
+change geometry; this is not a manifold guarantee.
+
+Omitting the preset retains the historical CLI values. With a preset, matching
+explicit controls are accepted; contradictions (including any face target with
+quality) fail before upload/startup. For custom combinations omit the preset.
+Seeds, model and camera remain independent. The CLI prints resolved values.
+See [normal export and preset verification](native-quality-normals.md).
 1536 adds the 12-step Euler/simple shape cascade; repair grid and atlas remain
 independent. Pixal3D estimates horizontal FoV with MoGe by default; a diagnostic
 `--native-camera-angle` freezes it. TRELLIS does not use MoGe. See the
@@ -74,7 +85,7 @@ independent. Pixal3D estimates horizontal FoV with MoGe by default; a diagnostic
 "$CLI" image-to-glb --backend native-local \
   --native-config /absolute/trellis-runtime/native-setup.json \
   --image /absolute/prepared.png --mesh-seed 42 --texture-seed 43 \
-  --no-decimation --mesh-repair solid --repair-resolution 512
+  --native-preset quality-1536-solid768
 # For Pixal3D, select the separate config with model=pixal3d; do not pass a
 # conflicting --native-model alongside an authoritative native config.
 ```
@@ -110,6 +121,7 @@ Publish settings with the bundled configuration script:
 {
   "cli": "/absolute/remesher-client/bin/comfy-prompt-cli",
   "backend": "native-local",
+  "native_preset": "quality-1536-solid768",
   "native_config": "/absolute/trellis-runtime/native-setup.json"
 }
 ```
@@ -122,7 +134,12 @@ export REMESHER_SETTINGS=/absolute/private/remesher-settings.json
 ```
 
 In that new Hermes session use `remesher_health`, then `remesher_generate` with
-`image`, `no_decimation: true`, `mesh_repair: solid`, `repair_resolution: 512`.
+`image`; the explicitly configured quality preset supplies the tested values.
+Request `native_preset: fast` for a bounded smoke instead. Request preset takes
+precedence over settings preset; request scalar controls take precedence over
+settings scalar controls, but all must agree with the selected preset. Settings
+JSON is authoritative over environment; the scalar alternative is
+`REMESHER_NATIVE_PRESET=quality-1536-solid768`. No preset means old behavior.
 Poll `remesher_job`, retrieve `remesher_assets` and verify its hashes. To select
 Pixal3D, publish a separate settings file pointing to its separate setup config.
 The plugin snapshots config per job and owns only its own children; a timeout

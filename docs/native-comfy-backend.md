@@ -141,7 +141,7 @@ its configuration and cancellation):
 ```sh
 comfy-prompt-cli image-to-glb --backend native \
   --native-server http://127.0.0.1:8188 --image prepared-object.png \
-  --mesh-seed 42 --texture-seed 43 --target-face-num 80000 --out-dir downloads
+  --mesh-seed 42 --texture-seed 43 --native-preset quality-1536-solid768 --out-dir downloads
 ```
 
 Owned local server (replace the explicit absolute paths with existing resources):
@@ -150,8 +150,13 @@ Owned local server (replace the explicit absolute paths with existing resources)
 comfy-prompt-cli image-to-glb --backend native-local \
   --native-python /absolute/venv/bin/python \
   --native-checkout /absolute/ComfyUI --native-runs ./native-runs \
-  --native-device cuda --image prepared-object.png --out-dir downloads
+  --native-device cuda --image prepared-object.png --out-dir downloads \
+  --native-preset quality-1536-solid768
 ```
+
+The examples explicitly opt into the more expensive quality preset. Choose
+`--native-preset fast` for a 512/no-repair/1024/80000 smoke; omission preserves
+historical defaults. See [resolved values and conflicts](native-installation.md).
 
 `native-local` currently requires POSIX and the main thread. It starts an argv
 list, no shell, on numeric loopback, with custom and partner/API nodes disabled.

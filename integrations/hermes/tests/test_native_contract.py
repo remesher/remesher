@@ -28,6 +28,10 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == '/system_stats': return self.reply({'system': {'argv': sys.argv}})
         if self.path == '/object_info':
             info = {}
+            for node in build_prompt('source.png', model='pixal3d', shape_resolution=1536,
+                    mesh_repair='solid', repair_resolution=768, atlas_resolution=4096,
+                    no_decimation=True).values():
+                info[node['class_type']] = {'input': {'required': {k: ['*'] for k in node['inputs']}}, 'output': ['*'] * 3}
             for node in build_prompt('source.png').values():
                 info[node['class_type']] = {'input': {'required': {k: ['*'] for k in node['inputs']}}, 'output': ['*'] * 3}
             return self.reply(info)
@@ -43,6 +47,7 @@ class Handler(BaseHTTPRequestHandler):
             prompt = json.loads(body)['prompt']
             assert prompt['image']['inputs']['image'] == 'uploaded.png'
             assert prompt['save']['class_type'] == 'SaveGLB'
+            Path(__file__).with_name('graph.json').write_text(json.dumps(prompt))
             Path(__file__).with_name('submitted').touch()
             return self.reply({'prompt_id': 'job', 'node_errors': {}})
         self.send_error(404)
@@ -89,7 +94,13 @@ class NativeCLIContract(unittest.TestCase):
             self.assertEqual(len(report["models"]), 4)
             self.assertFalse((folder / "output").exists(), "plan must be read-only")
 
-    def exercise(self, backend, stall=False):
+    def test_quality_both_backends_and_models(self):
+        for backend in ('native', 'native-local'):
+            for model in ('trellis2', 'pixal3d'):
+                with self.subTest(backend=backend, model=model):
+                    self.exercise(backend, preset='quality-1536-solid768', model=model)
+
+    def exercise(self, backend, stall=False, preset=None, model='trellis2'):
         cli = os.environ["REMESHER_TEST_NATIVE_CLI"]
         python = os.environ.get(
             "REMESHER_TEST_NATIVE_PYTHON", str(Path(cli).parent / "python")
@@ -107,7 +118,10 @@ class NativeCLIContract(unittest.TestCase):
                 "native_python": python,
                 "native_checkout": str(checkout),
                 "native_device": "cpu",
+                "native_model": model,
             }
+            if preset:
+                cfg['native_preset'] = preset
             server = None
             try:
                 if backend == "native":
@@ -151,6 +165,17 @@ class NativeCLIContract(unittest.TestCase):
                     Path(result["log_path"]).read_text(),
                 )
                 self.assertTrue((checkout / "submitted").exists())
+                graph = json.loads((checkout / 'graph.json').read_text())
+                self.assertEqual(graph['save']['inputs']['mesh'], ['smooth_normals', 0])
+                if preset:
+                    self.assertNotIn('decimate', graph)
+                    self.assertEqual(graph['shape_upsample']['inputs']['target_resolution'], 1536)
+                    self.assertEqual(graph['repair_remesh']['inputs']['resolution'], 768)
+                    self.assertEqual(graph['repair_remesh']['inputs']['precluster_max_verts'], 0)
+                    self.assertEqual(graph['unwrap']['inputs']['resolution'], 4096)
+                    self.assertEqual(graph['bake']['inputs']['texture_size'], 4096)
+                    self.assertEqual(graph['conditioning']['class_type'],
+                        'Pixal3DConditioning' if model == 'pixal3d' else 'Trellis2Conditioning')
                 if not stall:
                     self.assertEqual(
                         len(plugin.assets({"job_id": result["job_id"]})["assets"]), 1

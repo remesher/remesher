@@ -27,6 +27,38 @@ def load_plugin() -> Any:
 
 
 class PluginTests(unittest.TestCase):
+    def test_named_preset_settings_environment_and_request(self):
+        plugin, image = self.fixture('pass\n')
+        with patch.dict(os.environ, {'REMESHER_BACKEND': 'native',
+                                    'REMESHER_NATIVE_PRESET': 'quality-1536-solid768'}):
+            cfg = plugin.settings()
+        settings_file = self.root / 'preset-settings.json'
+        settings_file.write_text(json.dumps(cfg))
+        with patch.dict(os.environ, {'REMESHER_SETTINGS': str(settings_file)}):
+            self.assertEqual(plugin.settings()['native_preset'], 'quality-1536-solid768')
+            result = plugin.generate({'image': str(image)})
+            self.assertEqual(result['status'], 'queued', result)
+            argv = json.loads((Path(result['log_path']).parent / 'request.json').read_text())['argv']
+            self.assertEqual(argv[argv.index('--native-preset') + 1], 'quality-1536-solid768')
+            self.assertIn('--no-decimation', argv)
+            self.assertNotIn('--target-face-num', argv)
+            self.assertEqual(argv[argv.index('--native-shape-resolution') + 1], '1536')
+            self.assertEqual(argv[argv.index('--native-atlas-resolution') + 1], '4096')
+            self.assertEqual(argv[argv.index('--repair-resolution') + 1], '768')
+            self.wait_job(plugin, result['job_id'])
+            for extra in ({'no_decimation': False}, {'target_face_num': 80000},
+                          {'native_shape_resolution': 512}, {'native_atlas_resolution': 1024},
+                          {'mesh_repair': 'none'}, {'repair_resolution': 512},
+                          {'native_preset': None}, {'native_preset': 'bogus'}):
+                result = plugin.generate({'image': str(image), **extra})
+                self.assertEqual(result['status'], 'invalid_request', result)
+            result = plugin.generate({'image': str(image), 'native_preset': 'fast'})
+            self.assertEqual(result['status'], 'queued', result)
+            argv = json.loads((Path(result['log_path']).parent / 'request.json').read_text())['argv']
+            self.assertIn('--target-face-num', argv)
+            self.assertNotIn('--no-decimation', argv)
+            self.wait_job(plugin, result['job_id'])
+
     def test_quality_environment_defaults_are_integers(self):
         plugin, image = self.fixture('pass\n')
         with patch.dict(os.environ, {'REMESHER_BACKEND': 'native',

@@ -42,6 +42,7 @@ Example native-local settings (paths are placeholders):
 {
   "cli": "/absolute/remesher/.venv/bin/comfy-prompt-cli",
   "backend": "native-local",
+  "native_preset": "quality-1536-solid768",
   "native_python": "/absolute/native-venv/bin/python",
   "native_checkout": "/absolute/ComfyUI",
   "native_device": "cuda",
@@ -112,6 +113,7 @@ Check/apply must exit 0 with `ready=true` before generation. Configure the plugi
 {
   "cli": "/absolute/isolated-cli/bin/comfy-prompt-cli",
   "backend": "native-local",
+  "native_preset": "quality-1536-solid768",
   "native_config": "/absolute/native-setup.json"
 }
 ```
@@ -148,6 +150,30 @@ CLI also supports `--native-models` with explicit launcher paths. Required names
 Native generation validates the CLI's graph and model enumerations against the
 server's `/object_info` before upload/queueing. A file present locally is not
 proof of model visibility or valid weight contents.
+
+### Explicit quality preset (recommended agent configuration)
+
+Set `native_preset: quality-1536-solid768` in the settings above, or
+`REMESHER_NATIVE_PRESET=quality-1536-solid768` without a settings file. This
+explicitly opts into the more expensive tested single-image recipe: 1536 shape,
+solid768 repair, 4096 UV/PBR atlas, no decimation, no precluster cap,
+component threshold0.005 and bounded filling (perimeter0.03, at most16 vertices
+per hole, no chains/pre-weld). Native final exports carry smooth unit vertex
+normals after material application. No normal/AO map or tangent bake is added.
+
+A normal `remesher_generate` request then needs only `image`. A request
+`native_preset: fast` overrides the configured preset for a smoke job
+(512 shape, no repair, 1024 atlas, 80000 face target). No configured/request
+preset preserves legacy behavior; existing users are not silently opted into
+heavy generation. Request scalar values override settings scalar values, but
+must agree with the selected preset. Conflicts, including a face target with
+quality, fail before launch. To customize individual controls, use settings
+without a preset. Seeds/camera and runtime/model selection remain independent.
+The configure script validates and reports the resolved preset without launch.
+
+This is native single-image functionality with provisional quality, not full
+reference parity, multiview/retexture, automatic background removal, manifold
+output or non-NVIDIA inference certification.
 
 ### Exact native CLI invocation
 

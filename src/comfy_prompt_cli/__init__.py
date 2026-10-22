@@ -1040,6 +1040,7 @@ def image_to_glb(
     native_port: int = typer.Option(0, min=0, max=65535, help="native-local loopback port; 0 chooses an unused port."),
     native_startup_timeout: float = typer.Option(120, min=1, help="native-local startup deadline seconds."),
     native_model: str = typer.Option("trellis2", help="Native diffusion branch: trellis2 or pixal3d."),
+    native_preset: str | None = typer.Option(None, help="Explicit native job preset: quality-1536-solid768 (1536/solid768/4096/uncapped) or fast. Conflicting flags rejected; omission preserves old defaults."),
     native_shape_resolution: int = typer.Option(512, help="Native shape: 512 (default) or official 512-to-1536 cascade. No fallback; repair/atlas unchanged."),
     native_atlas_resolution: int = typer.Option(1024, help="Native UV unwrap and PBR bake atlas: 1024 (default) or 4096. Does not change generated geometry."),
     native_camera_angle: float | None = typer.Option(None, min=1, max=170, help="Pixal3D horizontal FoV override in degrees; omitted uses MoGe estimation."),
@@ -1076,6 +1077,31 @@ def image_to_glb(
     """Convert image to GLB; legacy Comfy3D remains the default backend."""
     if backend not in {"comfy3d", "native", "native-local"}:
         raise typer.BadParameter("backend must be comfy3d, native or native-local")
+    if native_preset is not None:
+        if backend == "comfy3d":
+            raise typer.BadParameter("--native-preset requires a native backend")
+        from .native_presets import resolve_preset
+        supplied = dict(native_shape_resolution=native_shape_resolution,
+                        native_atlas_resolution=native_atlas_resolution,
+                        mesh_repair=mesh_repair, repair_resolution=repair_resolution,
+                        repair_max_perimeter=repair_max_perimeter,
+                        repair_drop_small_components=repair_drop_small_components,
+                        no_decimation=no_decimation, target_face_num=target_face_num)
+        explicit = {k: v for k, v in supplied.items()
+                    if getattr(ctx.get_parameter_source(k), "name", None) != "DEFAULT"}
+        try:
+            resolved = resolve_preset(native_preset, explicit)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from None
+        native_shape_resolution = resolved["native_shape_resolution"]
+        native_atlas_resolution = resolved["native_atlas_resolution"]
+        mesh_repair = resolved["mesh_repair"]
+        repair_resolution = resolved["repair_resolution"]
+        repair_max_perimeter = resolved["repair_max_perimeter"]
+        repair_drop_small_components = resolved["repair_drop_small_components"]
+        no_decimation = resolved["no_decimation"]
+        target_face_num = resolved.get("target_face_num", target_face_num)
+        typer.echo("Native preset: " + native_preset + " " + json.dumps(resolved, sort_keys=True))
     if no_decimation and backend == "comfy3d":
         raise typer.BadParameter("--no-decimation requires a native backend")
     if native_shape_resolution not in {512, 1536}:

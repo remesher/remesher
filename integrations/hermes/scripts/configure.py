@@ -33,6 +33,9 @@ def main():
             "gpu_generation_verified": False,
             "model_visibility_verified": False,
         }
+        if "native_preset" in cfg:
+            report["resolved_native_preset"] = module.resolve_native_preset(cfg["native_preset"], cfg)
+            report["native_export_normals"] = "smooth-180"
         if cfg["backend"] == "native-local" and "native_config" in cfg:
             report["model_note"] = (
                 "Run the configured CLI native-setup check --config on native_config. "

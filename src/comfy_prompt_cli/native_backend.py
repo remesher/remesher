@@ -268,7 +268,11 @@ def build_prompt(
         metallic=["bake", 1],
         roughness=["bake", 2],
     )
-    node("save", "SaveGLB", mesh=textured, filename_prefix=filename_prefix)
+    # Attach normals on the final UV/material mesh, after all topology changes.
+    # 180 degrees preserves indexed topology and smooths coincident UV seams.
+    # The pinned SaveGLB serializer explicitly carries mesh.normals.
+    smooth = node("smooth_normals", "MeshSmoothNormals", mesh=textured, crease_angle=180.0)
+    node("save", "SaveGLB", mesh=smooth, filename_prefix=filename_prefix)
     return graph
 
 

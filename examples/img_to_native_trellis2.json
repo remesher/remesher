@@ -325,11 +325,15 @@
       ]
     }
   },
+  "smooth_normals": {
+    "class_type": "MeshSmoothNormals",
+    "inputs": {"mesh": ["textured", 0], "crease_angle": 180.0}
+  },
   "save": {
     "class_type": "SaveGLB",
     "inputs": {
       "mesh": [
-        "textured",
+        "smooth_normals",
         0
       ],
       "filename_prefix": "remesher"

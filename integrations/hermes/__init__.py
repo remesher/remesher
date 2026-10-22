@@ -327,6 +327,14 @@ def _generate(args):
             raise ValueError("image exceeds 20 MiB")
         if cfg["backend"] == "comfy3d":
             cfg["workflow"] = existing_path(cfg.get("workflow", ""), "workflow")
+        preset = args.get("native_preset", cfg.get("native_preset"))
+        if "native_preset" in args and preset is None:
+            raise ValueError("native_preset must be quality-1536-solid768 or fast")
+        if preset is not None:
+            if cfg["backend"] == "comfy3d":
+                raise ValueError("native_preset requires a native backend")
+            resolved = resolve_native_preset(preset, {**cfg, **args})
+            args = {**args, **resolved}
         timeout = args.get("timeout_seconds", 900)
         faces = args.get("target_face_num", 80000)
         no_decimation = args.get("no_decimation", False)
@@ -390,6 +398,7 @@ def _generate(args):
             cfg["cli"],
             "image-to-glb",
             *backend_arguments(cfg, folder),
+            *(["--native-preset", preset] if preset is not None else []),
             "--image",
             str(source),
             *([] if "native_config" in cfg else ["--out-dir", str(folder / "output")]),
@@ -441,6 +450,7 @@ ENVIRONMENT_KEYS = {
     "PYTORCH_CUDA_ALLOC_CONF",
 }
 SETTING_KEYS = {
+    "native_preset",
     "native_atlas_resolution",
     "repair_resolution",
     "cli",
@@ -455,6 +465,31 @@ SETTING_KEYS = {
     "native_server",
     "environment",
 }
+
+
+# Kept dependency-free for the standalone SDK plugin. A contract test compares
+# every value and rejection with comfy_prompt_cli.native_presets.
+NATIVE_PRESETS = {
+    "quality-1536-solid768": dict(native_shape_resolution=1536,
+        native_atlas_resolution=4096, mesh_repair="solid", repair_resolution=768,
+        repair_max_perimeter=0.03, repair_drop_small_components=0.005,
+        no_decimation=True),
+    "fast": dict(native_shape_resolution=512, native_atlas_resolution=1024,
+        mesh_repair="none", repair_resolution=512, repair_max_perimeter=0.03,
+        repair_drop_small_components=0.005, no_decimation=False, target_face_num=80000),
+}
+
+
+def resolve_native_preset(name, explicit):
+    if not isinstance(name, str) or name not in NATIVE_PRESETS:
+        raise ValueError("native_preset must be quality-1536-solid768 or fast")
+    values = NATIVE_PRESETS[name]
+    for key, value in explicit.items():
+        if key in values and (type(value) is not type(values[key]) or value != values[key]):
+            raise ValueError(f"native preset {name} conflicts with explicit {key}")
+        if key == "target_face_num" and values["no_decimation"]:
+            raise ValueError(f"native preset {name} conflicts with target_face_num")
+    return dict(values)
 
 
 def existing_path(value, label, *, executable=False, directory=False):
@@ -522,6 +557,10 @@ def validate_settings(raw):
     cfg.setdefault("backend", "comfy3d")
     if cfg["backend"] not in ("comfy3d", "native", "native-local"):
         raise ValueError("backend must be comfy3d, native or native-local")
+    if "native_preset" in cfg:
+        if cfg["backend"] == "comfy3d":
+            raise ValueError("native_preset requires a native backend")
+        resolve_native_preset(cfg["native_preset"], cfg)
     atlas = cfg.get("native_atlas_resolution", 1024)
     repair = cfg.get("repair_resolution", 512)
     if type(atlas) is not int or atlas not in (1024, 4096):
@@ -746,17 +785,20 @@ def register(ctx):
                     "maximum": 1800,
                     "default": 900,
                 },
+                "native_preset": {
+                    "type": "string", "enum": ["quality-1536-solid768", "fast"],
+                    "description": "Override configured native job preset. Quality: 1536 shape, solid768 repair, 4096 atlas, no decimation, smooth exported normals; expensive, explicit opt-in. Fast: legacy 512/none/1024/80000. Conflicting explicit values rejected.",
+                },
                 "no_decimation": {
                     "type": "boolean",
-                    "default": False,
-                    "description": "Native only: bypass simplification with no face/vertex cap; retain UV/PBR export.",
+                    "description": "Native only: bypass simplification. Omit with a preset; otherwise defaults false.",
                 },
                 "native_shape_resolution": {
-                    "type": "integer", "enum": [512, 1536], "default": 512,
+                    "type": "integer", "enum": [512, 1536],
                     "description": "Native generation grid; 1536 adds official refinement, never falls back. Repair and atlas unchanged.",
                 },
                 "native_atlas_resolution": {
-                    "type": "integer", "enum": [1024, 4096], "default": 1024,
+                    "type": "integer", "enum": [1024, 4096],
                     "description": "UV unwrap and PBR bake atlas size; no geometry or generation-resolution change.",
                 },
                 "native_camera_angle": {
@@ -765,11 +807,11 @@ def register(ctx):
                 },
                 "mesh_repair": {
                     "type": "string", "enum": ["none", "fill", "solid"],
-                    "description": "Opt-in native Torch/SciPy repair before UV/PBR; requires no_decimation. No new NVIDIA-only dependencies. Default none.",
+                    "description": "Native Torch/SciPy repair before UV/PBR; requires no_decimation. Omit with a preset; otherwise default none. No new NVIDIA-only dependencies.",
                 },
                 "repair_resolution": {
                     "type": "integer", "minimum": 32, "maximum": 2048,
-                    "description": "Solid remesh grid, default 512; generation resolution unchanged, no face cap.",
+                    "description": "Solid remesh grid. Omit with a preset; otherwise default512. Generation resolution unchanged, no face cap.",
                 },
                 "repair_max_perimeter": {
                     "type": "number", "minimum": 0, "maximum": 0.03,
@@ -780,11 +822,10 @@ def register(ctx):
                     "description": "Solid remesh component fraction of largest, default .005; 0 retains all.",
                 },
                 "target_face_num": {
-                    "description": "Simplified face target; ignored when no_decimation is true.",
+                    "description": "Simplified face target, default80000 without a preset. Omit with quality; conflicts are rejected. Ignored with custom no_decimation.",
                     "type": "integer",
                     "minimum": 1000,
                     "maximum": 200000,
-                    "default": 80000,
                 },
             },
             ["image"],
