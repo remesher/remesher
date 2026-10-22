@@ -1,0 +1,9 @@
+# Lightweight real plugin SDK validation dependencies; no inference stack.
+PyYAML==6.0.3
+python-dotenv==1.2.2
+rich==14.3.3
+httpx==0.28.1
+packaging==26.0
+ruamel.yaml==0.18.16
+requests==2.33.0
+psutil==7.2.2

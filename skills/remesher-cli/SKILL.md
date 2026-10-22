@@ -8,7 +8,37 @@ version: 0.1.0
 
 Use this skill when an agent needs to operate the Remesher Typer CLI in this repository.
 
-## Environment
+## Native setup (agent/plugin contract)
+
+These commands run on the host; do not assume the demo container paths below.
+Use absolute user-approved paths and parse setup stdout as one JSON document.
+
+```sh
+comfy-prompt-cli native-setup plan --root /absolute/native-runtime
+comfy-prompt-cli native-setup check --config /absolute/native-setup.json
+# Only after explicit package and 8,512,567,756-byte core model approval:
+comfy-prompt-cli native-setup apply --root /absolute/native-runtime --allow-install --allow-download
+comfy-prompt-cli image-to-glb --backend native-local --native-config /absolute/native-runtime/native-setup.json --image /absolute/prepared-object.png
+```
+
+Exit 0 means plan produced or setup ready, 1 means blockers, 2 means invalid/failed
+operation. Inspect `ready`, `blockers`, `memory`, `capabilities`, `checkout`, and
+model `verified` fields; never treat `generation_validated=false` as success.
+The config object contains schema_version, absolute venv/checkout/models/runs/output,
+device (cuda/cpu), and minimum_memory_gib. Save only plan's `config` object when
+customizing existing paths. Reuse does not authorize modifying an unmanaged venv.
+Conflicting runtime flags with `--native-config` fail; generation controls such
+as seeds/timeout remain explicit. Model visibility is configured per owned child.
+
+Never raise or escape cgroup limits silently: insufficient effective memory means
+obtain approval for a sufficiently sized bounded scope, then re-check. The
+invocation-only low-memory override acknowledges risk and does not raise limits.
+Model downloads resume/reuse only after exact size/SHA256 verification; no generic
+URLs or manifest overrides. No Pixal3D diffusion download: Pixal3D acceptance is
+deferred until TRELLIS is green end-to-end. See `docs/native-setup.md` for the
+complete executable plugin contract, isolation limits, and acceptance task index.
+
+## Environment (legacy demo container only)
 
 - Repo path inside demo container: `/workspace/remesher`
 - Shared uploads: `/workspace/input`

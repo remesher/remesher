@@ -16,7 +16,7 @@ import sys
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlencode
 
 import httpx
@@ -1018,8 +1018,36 @@ def pad_tpose_image(
     typer.echo(f"Padded T-pose image: {padded}")
 
 
+@app.command("native-setup", context_settings={"allow_extra_args": True, "ignore_unknown_options": True}, add_help_option=False)
+def native_setup_command(ctx: typer.Context):
+    """Plan/check/apply a pinned runtime; use native-setup --help for options."""
+    from .native_setup import main as setup_main
+    raise typer.Exit(setup_main(ctx.args))
+
+
 @app.command("image-to-glb")
 def image_to_glb(
+    ctx: typer.Context,
+    backend: str = typer.Option("comfy3d", help="comfy3d (legacy), native (existing loopback server), native-local (owned child)."),
+    native_server: str = typer.Option("http://127.0.0.1:8188", help="Existing numeric loopback native ComfyUI HTTP origin."),
+    native_config: Annotated[Path | None, typer.Option(help="Native setup JSON; supplies all runtime paths and output/device policy.")] = None,
+    native_models: Annotated[Path | None, typer.Option(help="Absolute model root visible to native-local child.")] = None,
+    native_allow_low_memory: bool = typer.Option(False, help="Explicitly acknowledge setup memory policy risk; never raises resource limits."),
+    native_python: Annotated[Path | None, typer.Option(help="Absolute Python executable for native-local; no auto-install.")] = None,
+    native_checkout: Annotated[Path | None, typer.Option(help="Absolute ComfyUI checkout for native-local.")] = None,
+    native_runs: Annotated[Path, typer.Option(help="Private per-run native-local directories and retained logs.")] = Path("native-runs"),
+    native_device: str = typer.Option("cuda", help="Explicit native-local device policy: cuda or cpu; not hardware certification."),
+    native_port: int = typer.Option(0, min=0, max=65535, help="native-local loopback port; 0 chooses an unused port."),
+    native_startup_timeout: float = typer.Option(120, min=1, help="native-local startup deadline seconds."),
+    native_model: str = typer.Option("trellis2", help="Native diffusion branch: trellis2 or pixal3d."),
+    native_shape_resolution: int = typer.Option(512, help="Native shape: 512 (default) or official 512-to-1536 cascade. No fallback; repair/atlas unchanged."),
+    native_atlas_resolution: int = typer.Option(1024, help="Native UV unwrap and PBR bake atlas: 1024 (default) or 4096. Does not change generated geometry."),
+    native_camera_angle: float | None = typer.Option(None, min=1, max=170, help="Pixal3D horizontal FoV override in degrees; omitted uses MoGe estimation."),
+    no_decimation: bool = typer.Option(False, "--no-decimation", help="Native only: bypass mesh simplification; no face/vertex cap, preserve UV/PBR export."),
+    mesh_repair: str = typer.Option("none", help="Opt-in native repair before UV: none, fill, solid. Requires --no-decimation. Uses built-in Torch/SciPy nodes; installs no NVIDIA-only dependencies."),
+    repair_resolution: int = typer.Option(512, min=32, max=2048, help="Solid remesh grid only; does not change generation resolution or impose a face cap."),
+    repair_max_perimeter: float = typer.Option(0.03, min=0, max=0.03, help="Small-hole perimeter in mesh units; 0 skips filling. Chains disabled, at most 16 boundary vertices."),
+    repair_drop_small_components: float = typer.Option(0.005, min=0, max=0.5, help="Solid remesh: discard disconnected components below this fraction of the largest. 0 disables."),
     image: Path = typer.Option(
         ..., exists=True, readable=True, help="Local input image path"
     ),
@@ -1045,9 +1073,48 @@ def image_to_glb(
         Path("downloads"), help="Directory to write downloaded files"
     ),
 ) -> None:
-    """Convert image to GLB using img_to_trellis2 workflow."""
-    cfg = _load_config(config)
-    base = str(cfg.server_url).rstrip("/")
+    """Convert image to GLB; legacy Comfy3D remains the default backend."""
+    if backend not in {"comfy3d", "native", "native-local"}:
+        raise typer.BadParameter("backend must be comfy3d, native or native-local")
+    if no_decimation and backend == "comfy3d":
+        raise typer.BadParameter("--no-decimation requires a native backend")
+    if native_shape_resolution not in {512, 1536}:
+        raise typer.BadParameter("--native-shape-resolution must be 512 or 1536")
+    if native_atlas_resolution not in {1024, 4096}:
+        raise typer.BadParameter("--native-atlas-resolution must be 1024 or 4096")
+    if native_atlas_resolution != 1024 and backend == "comfy3d":
+        raise typer.BadParameter("--native-atlas-resolution requires a native backend")
+    if native_shape_resolution != 512 and backend == "comfy3d":
+        raise typer.BadParameter("--native-shape-resolution requires a native backend")
+    if mesh_repair not in {"none", "fill", "solid"}:
+        raise typer.BadParameter("--mesh-repair must be none, fill or solid")
+    if mesh_repair != "none" and (backend == "comfy3d" or not no_decimation):
+        raise typer.BadParameter("--mesh-repair requires a native backend and --no-decimation")
+    if native_config is not None:
+        if backend != "native-local":
+            raise typer.BadParameter("--native-config requires --backend native-local")
+        try:
+            from .native_setup import check, load_config
+            conflicts = [name for name in ("native_python", "native_checkout", "native_models", "native_runs", "native_device", "out_dir")
+                         if getattr(ctx.get_parameter_source(name), "name", None) == "COMMANDLINE"]
+            if conflicts:
+                raise ValueError("--native-config conflicts with explicit " + ", ".join(conflicts))
+            setup = load_config(native_config)
+            if getattr(ctx.get_parameter_source("native_model"), "name", None) == "COMMANDLINE" and native_model != setup.model:
+                raise ValueError("--native-model conflicts with setup config model")
+            native_model = setup.model
+            report = check(setup, allow_low_memory=native_allow_low_memory)
+            if not report["ready"]:
+                raise ValueError("Native setup not ready: " + "; ".join(report["blockers"]))
+            native_python, native_checkout, native_runs = setup.python, setup.checkout, setup.runs
+            native_models, native_device, out_dir = setup.models, setup.device, setup.output
+        except (ValueError, OSError) as exc:
+            raise typer.BadParameter(str(exc)) from None
+    if backend != "comfy3d" and workflow_file != DEFAULT_IMAGE_TO_GLB_WORKFLOW:
+        raise typer.BadParameter("native backends use their own API graph; --workflow-file is legacy-only")
+    if backend == "comfy3d":
+        cfg = _load_config(config)
+        base = str(cfg.server_url).rstrip("/")
 
     upload_image = image
     if subject_scale < 1.0:
@@ -1064,6 +1131,51 @@ def image_to_glb(
         except (ValueError, OSError) as exc:
             raise typer.BadParameter(f"Could not pad image: {exc}") from exc
         typer.echo(f"Padded input image: {upload_image}")
+
+    if backend != "comfy3d":
+        from contextlib import nullcontext
+        from urllib.parse import urlsplit
+
+        from .native_backend import generate
+        from .native_runtime import LocalRuntime
+
+        try:
+            if backend == "native-local":
+                if native_python is None or native_checkout is None:
+                    raise ValueError("native-local requires --native-python and --native-checkout")
+                owner = LocalRuntime(native_python, native_checkout, native_runs, device=native_device, models=native_models, port=native_port, startup_timeout=native_startup_timeout)
+            else:
+                url = urlsplit(native_server)
+                if (url.scheme != "http" or url.hostname not in {"127.0.0.1", "::1"}
+                    or url.username is not None or url.password is not None
+                    or url.path not in {"", "/"} or url.query or url.fragment
+                    or (url.port is not None and not 1 <= url.port <= 65535)):
+                    raise ValueError("native server must be a numeric loopback HTTP origin")
+                owner = nullcontext()
+            with owner as runtime:
+                base = runtime.base_url if runtime else native_server.rstrip("/")
+                if runtime:
+                    typer.echo(f"Owned native runtime: {runtime.run_dir}")
+                with httpx.Client(base_url=base, trust_env=False, follow_redirects=False, timeout=30) as client:
+                    downloaded = generate(client, upload_image, out_dir, timeout=timeout, poll_interval=poll_interval, client_id=client_id,
+                        model=native_model, camera_angle=native_camera_angle,
+                        shape_resolution=native_shape_resolution,
+                        atlas_resolution=native_atlas_resolution,
+                        mesh_seed=42 if mesh_seed is None else mesh_seed,
+                        texture_seed=43 if texture_seed is None else texture_seed,
+                        target_face_num=80000 if target_face_num is None else target_face_num,
+                        no_decimation=no_decimation,
+                        mesh_repair=mesh_repair, repair_resolution=repair_resolution,
+                        repair_max_perimeter=repair_max_perimeter,
+                        repair_drop_small_components=repair_drop_small_components,
+                        filename_prefix=filename_prefix or "remesher")
+            for path in downloaded:
+                typer.echo(f"Downloaded {path}")
+            return
+        except httpx.HTTPError:
+            raise typer.BadParameter("Native HTTP request failed; inspect server logs (no legacy fallback).") from None
+        except (ValueError, TypeError, KeyError, RuntimeError, OSError) as exc:
+            raise typer.BadParameter(str(exc)) from None
 
     prompt = _load_prompt_from_file(workflow_file)
     uploaded_image_ref = _upload_input_image(base, upload_image)

@@ -1,0 +1,118 @@
+name: Remesher CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, 'integration/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: remesher-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Focused lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: '0.10.11'
+      - name: Correctness lint (no baseline suppressions)
+        run: |
+          uvx ruff==0.17.1 check --isolated --select E9,F63,F7,F82 src tests integrations/hermes scripts
+          uvx ruff==0.17.1 check --isolated --select F src/comfy_prompt_cli/native_*.py tests/test_native*.py tests/test_pixal*.py tests/test_no_decimation_cli.py tests/test_release_ci.py integrations/hermes scripts/verify-*.py
+          git diff --check
+
+  tests:
+    name: CPU tests (Python ${{ matrix.python }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.13']
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: '0.10.11'
+          python-version: ${{ matrix.python }}
+      - name: Locked application + pinned test tools
+        run: |
+          uv sync --frozen
+          uv pip install --python .venv/bin/python pytest==9.1.1 pytest-subtests==0.15.0
+      - name: Full unit and HTTP/process integration suite (no required skips)
+        run: |
+          export HERMES_HOME="$RUNNER_TEMP/hermes-cpu"
+          export REMESHER_TEST_CLI="$PWD/.venv/bin/comfy-prompt-cli"
+          export REMESHER_TEST_NATIVE_CLI="$REMESHER_TEST_CLI"
+          export REMESHER_TEST_NATIVE_PYTHON="$PWD/.venv/bin/python"
+          .venv/bin/python -m pytest -q tests integrations/hermes/tests --junitxml=reports/tests.xml
+          .venv/bin/python scripts/verify-test-report.py reports/tests.xml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: cpu-tests-${{ matrix.python }}
+          path: reports/
+          if-no-files-found: error
+
+  wheel:
+    name: Isolated wheel contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: '0.10.11'
+          python-version: '3.13'
+      - name: Clean install and real CLI/plugin partitions
+        env:
+          REMESHER_CI_REPORT_DIR: ${{ github.workspace }}/reports
+        run: sh scripts/verify-native-wheel.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: wheel-contracts
+          path: reports/
+          if-no-files-found: error
+
+  plugin-sdk:
+    name: Hermes SDK doctor and validator
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: NousResearch/hermes-agent
+          ref: 9e01b44dd23978f9ff40b7837467f3a9f1582130
+          path: .ci-hermes-sdk
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
+        with:
+          version: '0.10.11'
+          python-version: '3.13'
+      - name: Install lightweight SDK dependencies (no model/GPU stack)
+        run: |
+          uv venv "$RUNNER_TEMP/hermes-sdk"
+          uv pip install --python "$RUNNER_TEMP/hermes-sdk/bin/python" -r scripts/hermes-sdk-requirements.txt
+      - name: Real discovery, registration and catalog capability probe
+        run: |
+          export HERMES_HOME="$RUNNER_TEMP/hermes-profile"
+          export PYTHONPATH="$PWD/.ci-hermes-sdk"
+          "$RUNNER_TEMP/hermes-sdk/bin/python" scripts/verify-plugin-sdk.py integrations/hermes
+          # Missing SDK dependencies must fail, not skip or pass via a mock.
+          if "$RUNNER_TEMP/hermes-sdk/bin/python" -S scripts/verify-plugin-sdk.py integrations/hermes 2> "$RUNNER_TEMP/missing-sdk.log"; then
+            exit 1
+          fi
+          python -c 'import pathlib, os; assert "Missing Hermes SDK dependency" in pathlib.Path(os.environ["RUNNER_TEMP"], "missing-sdk.log").read_text()'
+
+# Actual Spark inference/quality is an explicit operator acceptance gate, not
+# an inferred result of these CPU fixtures. No GPU or model downloads in CI.

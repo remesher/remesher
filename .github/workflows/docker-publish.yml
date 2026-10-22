@@ -2,11 +2,14 @@
 name: Build and Publish Remesher Docker Image
 
 on:
-  push:
-    branches:
-      - main
-      - master
+  # Release-owner opt-in only: integrating main must not publish or occupy a GPU.
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish the tested image to Docker Hub (release approval required)'
+        type: boolean
+        required: true
+        default: false
 
 permissions:
   contents: read
@@ -115,7 +118,7 @@ jobs:
   push:
     name: Push Docker image
     needs: build-and-smoke
-    if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main' }}
     runs-on: self-hosted
     timeout-minutes: 60
     steps:
