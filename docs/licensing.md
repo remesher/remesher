@@ -27,8 +27,8 @@ license/notice/attribution markers and the history of bundled demo assets. This
 is not an exhaustive provenance audit or legal review. No pre-existing tracked
 LICENSE/NOTICE file or explicit copied-source attribution was found in this
 inspection; that is not proof that all code has independently verified origin.
-No invented NOTICE is added. Existing source, assets and upstream references
-are preserved unchanged.
+No invented NOTICE is added. The scoped asset update below records the owner's
+confirmation and removes one third-party animation from the current tree.
 
 - Native setup points to external ComfyUI and Comfy-Org TRELLIS.2, Pixal3D and
   MoGe repositories; the DINO weight is also an external model artifact.
@@ -38,22 +38,41 @@ are preserved unchanged.
 - The Docker recipes obtain separate third-party runtimes/dependencies and may
   package assets not present in the client wheel. A licensed client wheel is
   not blanket clearance of the complete Docker image.
-- `workspace/input/animation_templates/mixamo/Mma_Kick.fbx` is a tracked Mixamo
-  animation, introduced by `ebf98830b8853c036b313be0181f165b25774d3e`.
-  No redistribution permission record accompanies it in this repository.
-- `workspace/input/demo/pencil_sketch_character.jpg` is a tracked demo image,
-  introduced by `97c7533ad98cd98837793765316c76416cde56ae`.
-  Its authorship and redistribution permission are not established by the
-  commit's author field or by the code license.
 
-**Outstanding distribution gate:** the owner must establish permission for
-those bundled demo assets, or separately remove/replace them before source/demo
-redistribution. They are excluded from this first-party code license grant and
-are not included in the Python wheel or Hermes plugin directory. This change
-neither deletes assets nor claims their redistribution is authorized. Catalog
+## Scoped demo asset provenance
+
+- `workspace/input/demo/pencil_sketch_character.jpg`, introduced by
+  `97c7533ad98cd98837793765316c76416cde56ae`, is preserved unchanged.
+  MichaelGold explicitly confirmed in the owner conversation that this is his
+  own sketch and that he has the rights to it. This records the supplied owner
+  confirmation, rather than inferring authorship from a commit author field.
+  The sketch is no longer an unresolved third-party permission gate.
+  Copyright ownership confirmation is not an Apache-2.0 grant for the image:
+  the code-license decision does not assign a separate blanket asset license,
+  or license model weights or generated outputs.
+- `workspace/input/animation_templates/mixamo/Mma_Kick.fbx`, introduced by
+  `ebf98830b8853c036b313be0181f165b25774d3e`, has been removed from the current
+  tree at the owner's request. No redistribution permission is asserted for
+  that third-party animation. History has not been rewritten and external
+  copies have not been deleted. Historical checkouts may still contain it.
+  The notebooks no longer fall back to it or download it: optional retargeting
+  requires a user-supplied FBX that the user has rights to use. Without one,
+  they keep the rigged GLB for subsequent preview/export.
+
+These two assets no longer constitute the previously identified unresolved
+current-tree demo permission gate: one has explicit owner provenance and the
+other is no longer bundled. Neither is included in the Python wheel or Hermes
+plugin directory. This scoped update is not an exhaustive clearance of other
+materials, historical distributions or complete Docker images. Catalog
 admission, release approval and final exact-head review remain separate gates.
 
+
 ## Regression evidence
+
+`tests/test_demo_asset_provenance.py` checks that the removed FBX is absent,
+executes the notebook retarget cells without an FBX (no subprocess call), checks
+explicit missing inputs fail rather than download, and verifies upload-without-FBX
+clears a previous selection. The sketch is retained.
 
 `tests/test_release_ci.py` checks SPDX metadata, official license bytes, the
 standalone plugin copy and Docker build-context inclusion. The isolated wheel

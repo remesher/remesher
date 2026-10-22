@@ -8,9 +8,10 @@ An agent harness that uses a small Typer CLI to submit ComfyUI API prompts, stre
 
 Remesher's own code is licensed under **Apache-2.0**; see [LICENSE](LICENSE).
 This grant does not cover third-party code/dependencies, runtimes, model weights,
-input assets or generated outputs. In particular, the bundled Mixamo FBX and
-sketch image are not licensed by this code grant; their redistribution clearance
-remains outstanding. See [license scope and distribution checks](docs/licensing.md).
+input assets or generated outputs. MichaelGold confirmed ownership and rights
+for the preserved demo sketch; the third-party Mixamo FBX is no longer bundled.
+Neither action extends the code license to assets. See
+[license scope and distribution checks](docs/licensing.md).
 
 ## What it does
 

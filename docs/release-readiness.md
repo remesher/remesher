@@ -37,7 +37,7 @@ status is not the current merge queue. Install one integrated revision using
 | Docker / package release / plugin catalog | Not published | Docker dispatch defaults `publish=false`; main push no longer launches publishing. Release owner decides distribution |
 | Meshy reference alignment | Packaging only, verified | Kept Python manifest/four-tool ABI; quoted 0.2.1 version, validated Hermes 0.22.2 floor, Linux metadata, owner-approved Apache-2.0 code license and pinned external documentation. See `integrations/hermes/CATALOG.md`. No MCP rewrite or catalog admission claim |
 | First-party code license | Resolved by owner | Apache-2.0 in root/package/plugin metadata; exact full text ships in wheel and plugin. Does not license weights or third-party materials |
-| Third-party redistribution | Outstanding for bundled demo assets | Mixamo FBX and sketch image provenance/redistribution require owner clearance before source/demo distribution; see [scoped inspection](licensing.md). Not an exhaustive legal review |
+| Third-party redistribution | Scoped demo gate resolved; broader scope separate | MichaelGold confirmed sketch ownership/rights; Mixamo FBX removed from current tree. No blanket asset/model license or historical clearance; see [scoped inspection](licensing.md). Not an exhaustive legal review |
 | Desktop viewer/gallery | External ownership | Teknium will integrate this; not a Remesher implementation obligation or release gate. Messenger previews are out of scope |
 | Future hosted service | Product plan only | Paid managed fstack-remesher is future work; no billing/auth/hosted runtime or speculative API added |
 

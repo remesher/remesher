@@ -94,7 +94,7 @@ jobs:
                docker exec "${TEST_CONTAINER}" test -f /workspace/remesher/docker/demo-jupyter/scripts/pull-comfy3d.sh && \
                docker exec "${TEST_CONTAINER}" test -f /workspace/remesher/docker/demo-jupyter/scripts/ollama-gemma4.sh && \
                docker exec "${TEST_CONTAINER}" test -s /workspace/input/demo/pencil_sketch_character.jpg && \
-               docker exec "${TEST_CONTAINER}" test -s /workspace/input/animation_templates/mixamo/Mma_Kick.fbx && \
+               docker exec "${TEST_CONTAINER}" test ! -e /workspace/input/animation_templates/mixamo/Mma_Kick.fbx && \
                docker exec "${TEST_CONTAINER}" test -f /workspace/remesher/skills/remesher-cli/SKILL.md && \
                docker exec "${TEST_CONTAINER}" comfy-prompt-cli --help >/dev/null && \
                docker exec "${TEST_CONTAINER}" python -c "import requests, ipykernel" && \
