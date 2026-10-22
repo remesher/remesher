@@ -25,8 +25,9 @@ The repository and this plugin directory include the exact Apache License 2.0
 text as `LICENSE`; package and plugin metadata use SPDX `Apache-2.0`.
 This grant does not relicense third-party code, runtimes, model weights, input
 assets or generated outputs. No Meshy source is copied. Repository
-`docs/licensing.md` records the scoped source/asset inspection and outstanding
-asset-provenance gate; this is not exhaustive legal review.
+`docs/licensing.md` records the scoped source/asset inspection: the owner confirmed
+sketch ownership/rights and the Mixamo FBX was removed. This is not exhaustive
+third-party distribution clearance or legal review.
 
 ## Preparing a catalog entry (not submitting one)
 
