@@ -68,6 +68,7 @@ name = "comfy-prompt-cli"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "httpcore" },
     { name = "httpx" },
     { name = "pillow" },
     { name = "pydantic" },
@@ -77,6 +78,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpcore", specifier = "==1.0.9" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pillow", specifier = ">=11.0.0" },
     { name = "pydantic", specifier = ">=2.12.5" },

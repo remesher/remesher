@@ -52,6 +52,7 @@ class LocalRuntime:
         self.log = None
         self.closed = False
         self.previous_sigterm = None
+        self.terminated = False
 
     def __enter__(self):
         if self.closed or self.process is not None:
@@ -117,6 +118,8 @@ class LocalRuntime:
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
             )
+            if self.terminated:
+                raise SystemExit(128 + signal.SIGTERM)
             deadline = time.monotonic() + self.startup_timeout
             with httpx.Client(
                 base_url=self.base_url,
@@ -148,9 +151,12 @@ class LocalRuntime:
             self.close()
             raise
 
-    @staticmethod
-    def _terminate(signum, frame):
-        raise SystemExit(128 + signum)
+    def _terminate(self, signum, frame):
+        self.terminated = True
+        # Popen may have created the new session before returning its handle.
+        # Do not unwind until ownership is recorded and close() can reap it.
+        if self.process is not None:
+            raise SystemExit(128 + signum)
 
     def close(self):
         if self.closed:

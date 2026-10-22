@@ -446,36 +446,84 @@ def _remaining(deadline):
     return remaining
 
 
+class _FreshArtifactConnection(Exception):
+    """Retry only before any request bytes are sent on an idle HTTP/1 socket."""
+
+
 @contextmanager
-def _transfer_deadline(response, deadline):
-    """Bound blocked socket reads as well as a continuously arriving body.
+def _artifact_response(client, params, deadline):
+    """Own an HTTP/1 socket before headers, through the final body read.
 
-    HTTPX's read timeout is an inactivity timeout, captured once by the body
-    iterator. A socket shutdown at the absolute deadline also interrupts a read
-    begun late in the transfer. Only this non-reusable response connection is
-    affected; the timer is cancelled and joined before leaving its scope.
-    In-memory transports have no socket and are checked between yielded chunks.
+    HTTPX read timeouts measure inactivity, not total transfer duration. The
+    httpcore trace extension exposes a newly connected stream before headers.
+    An idle pooled connection has no connect event: reject it *before sending*
+    so httpcore closes just that acquired HTTP/1 connection, then retry. Never
+    close the caller's client/pool or a multiplexed HTTP/2 socket.
     """
-    remaining = _remaining(deadline)
-    stream = response.extensions.get("network_stream")
-    sock = stream.get_extra_info("socket") if stream is not None else None
+    stream = None
     timer = None
-    if remaining is not None and sock is not None:
-        if response.http_version == "HTTP/2":
+
+    def trace(event, info):
+        nonlocal stream, timer
+        if event == "http11.send_request_headers.started" and stream is None:
+            raise _FreshArtifactConnection()
+        if event == "http11.response_closed.complete":
+            if timer is not None:
+                timer.cancel()
+                timer.join()
+                timer = None
+            stream = None
+        if event == "http2.send_request_headers.started":
             raise ValueError("native artifact deadlines require an HTTP/1 connection")
+        if event in {
+            "connection.connect_tcp.complete",
+            "connection.connect_unix_socket.complete",
+            "connection.start_tls.complete",
+        }:
+            stream = info["return_value"]
+        if event.endswith(".started") and "response_closed" not in event:
+            remaining = _remaining(deadline)
+            # Pool acquisition may already have spent some of the budget.
+            if "timeout" in info:
+                info["timeout"] = remaining
+        if event == "http11.send_request_headers.started" and stream is not None:
+            sock = stream.get_extra_info("socket")
+            if sock is None:
+                raise ValueError("native artifact deadline requires a socket")
 
-        def expire():
-            try:
-                sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass  # Response already closed at the deadline boundary.
+            def expire():
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass  # This response has already closed.
 
-        timer = threading.Timer(remaining, expire)
-        timer.daemon = True
-        timer.start()
+            remaining = _remaining(deadline)
+            assert remaining is not None  # Trace is installed only with a deadline.
+            timer = threading.Timer(remaining, expire)
+            timer.daemon = True
+            timer.start()
+
     try:
-        yield
-        _remaining(deadline)
+        while True:
+            try:
+                with client.stream(
+                    "GET",
+                    "/view",
+                    params=params,
+                    timeout=_remaining(deadline)
+                    if deadline is not None
+                    else client.timeout,
+                    headers={"Connection": "close"},
+                    extensions={"trace": trace} if deadline is not None else {},
+                ) as response:
+                    _remaining(deadline)
+                    response.raise_for_status()
+                    yield response
+                    _remaining(deadline)
+                break
+            except _FreshArtifactConnection:
+                # No request was sent. The rejected connection is now closed.
+                _remaining(deadline)
     except httpx.HTTPError:
         _remaining(deadline)  # Normalize deadline-triggered socket errors.
         raise
@@ -508,23 +556,19 @@ def _download(client, artifacts, out_dir, *, deadline=None):
         try:
             with (
                 os.fdopen(fd, "wb") as output,
-                client.stream(
-                    "GET",
-                    "/view",
-                    params={"filename": name, "subfolder": folder, "type": "output"},
-                    timeout=_remaining(deadline) if deadline is not None else client.timeout,
-                    headers={"Connection": "close"},
+                _artifact_response(
+                    client,
+                    {"filename": name, "subfolder": folder, "type": "output"},
+                    deadline,
                 ) as response,
             ):
-                response.raise_for_status()
                 size = 0
-                with _transfer_deadline(response, deadline):
-                    for chunk in response.iter_bytes():
-                        _remaining(deadline)
-                        size += len(chunk)
-                        if size > 512 * 1024 * 1024:
-                            raise ValueError("native artifact exceeds 512 MiB limit")
-                        output.write(chunk)
+                for chunk in response.iter_bytes():
+                    _remaining(deadline)
+                    size += len(chunk)
+                    if size > 512 * 1024 * 1024:
+                        raise ValueError("native artifact exceeds 512 MiB limit")
+                    output.write(chunk)
             with path.open("rb") as file:
                 header = file.read(12)
             if len(header) != 12 or struct.unpack("<4sII", header) != (

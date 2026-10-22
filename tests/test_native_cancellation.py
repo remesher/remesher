@@ -11,6 +11,52 @@ from pathlib import Path
 import pytest
 
 from comfy_prompt_cli import native_setup
+from comfy_prompt_cli.native_runtime import LocalRuntime
+
+
+@pytest.mark.parametrize("previous", [signal.SIG_DFL, signal.SIG_IGN])
+def test_runtime_defers_sigterm_until_spawn_handle_is_owned(
+    tmp_path, monkeypatch, previous
+):
+    original = subprocess.Popen
+    children = []
+
+    def spawn(*args, **kwargs):
+        child = original(
+            [sys.executable, "-c", "import time; time.sleep(30)"], **kwargs
+        )
+        children.append(child)
+        os.kill(os.getpid(), signal.SIGTERM)
+        os.kill(os.getpid(), signal.SIGTERM)
+        return child
+
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    (checkout / "main.py").write_text("# fixture\n")
+    owner = LocalRuntime(
+        Path(sys.executable), checkout, tmp_path / "runs", device="cpu"
+    )
+    original_handler = signal.getsignal(signal.SIGTERM)
+    signal.signal(signal.SIGTERM, previous)
+    monkeypatch.setattr(native_setup.subprocess, "Popen", spawn)
+    try:
+        with pytest.raises(SystemExit) as caught:
+            owner.__enter__()
+        assert caught.value.code == 143
+        assert len(children) == 1 and children[0].poll() is not None
+        with pytest.raises(ChildProcessError):
+            os.waitpid(children[0].pid, os.WNOHANG)
+        assert owner.process is children[0]
+        assert owner.closed and owner.log is not None and owner.log.closed
+        assert signal.getsignal(signal.SIGTERM) is previous
+        owner.close()
+        assert signal.getsignal(signal.SIGTERM) is previous
+    finally:
+        signal.signal(signal.SIGTERM, original_handler)
+        for child in children:
+            if child.poll() is None:
+                os.killpg(child.pid, signal.SIGKILL)
+            child.wait(timeout=2)
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Linux installer ownership")
