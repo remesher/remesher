@@ -38,7 +38,10 @@ def build_prompt(
     filename_prefix="remesher",
     camera_angle=None,
     shape_resolution=512,
+    atlas_resolution=1024,
 ):
+    if type(atlas_resolution) is not int or atlas_resolution not in {1024, 4096}:
+        raise ValueError("native atlas resolution must be 1024 or 4096")
     if type(shape_resolution) is not int or shape_resolution not in {512, 1536}:
         raise ValueError("native shape resolution must be 512 or 1536")
     if model not in {"trellis2", "pixal3d"}:
@@ -245,7 +248,7 @@ def build_prompt(
         "UnwrapMesh",
         mesh=reduced,
         segmenter="pec",
-        resolution=1024,
+        resolution=atlas_resolution,
         padding=1,
         weld_distance=0.0002,
     )
@@ -255,7 +258,7 @@ def build_prompt(
         mesh=uv,
         voxel_colors=colors,
         reference_mesh=mesh,
-        texture_size=1024,
+        texture_size=atlas_resolution,
     )
     textured = node(
         "textured",

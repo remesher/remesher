@@ -1041,6 +1041,7 @@ def image_to_glb(
     native_startup_timeout: float = typer.Option(120, min=1, help="native-local startup deadline seconds."),
     native_model: str = typer.Option("trellis2", help="Native diffusion branch: trellis2 or pixal3d."),
     native_shape_resolution: int = typer.Option(512, help="Native shape: 512 (default) or official 512-to-1536 cascade. No fallback; repair/atlas unchanged."),
+    native_atlas_resolution: int = typer.Option(1024, help="Native UV unwrap and PBR bake atlas: 1024 (default) or 4096. Does not change generated geometry."),
     native_camera_angle: float | None = typer.Option(None, min=1, max=170, help="Pixal3D horizontal FoV override in degrees; omitted uses MoGe estimation."),
     no_decimation: bool = typer.Option(False, "--no-decimation", help="Native only: bypass mesh simplification; no face/vertex cap, preserve UV/PBR export."),
     mesh_repair: str = typer.Option("none", help="Opt-in native repair before UV: none, fill, solid. Requires --no-decimation. Uses built-in Torch/SciPy nodes; installs no NVIDIA-only dependencies."),
@@ -1079,6 +1080,10 @@ def image_to_glb(
         raise typer.BadParameter("--no-decimation requires a native backend")
     if native_shape_resolution not in {512, 1536}:
         raise typer.BadParameter("--native-shape-resolution must be 512 or 1536")
+    if native_atlas_resolution not in {1024, 4096}:
+        raise typer.BadParameter("--native-atlas-resolution must be 1024 or 4096")
+    if native_atlas_resolution != 1024 and backend == "comfy3d":
+        raise typer.BadParameter("--native-atlas-resolution requires a native backend")
     if native_shape_resolution != 512 and backend == "comfy3d":
         raise typer.BadParameter("--native-shape-resolution requires a native backend")
     if mesh_repair not in {"none", "fill", "solid"}:
@@ -1155,6 +1160,7 @@ def image_to_glb(
                     downloaded = generate(client, upload_image, out_dir, timeout=timeout, poll_interval=poll_interval, client_id=client_id,
                         model=native_model, camera_angle=native_camera_angle,
                         shape_resolution=native_shape_resolution,
+                        atlas_resolution=native_atlas_resolution,
                         mesh_seed=42 if mesh_seed is None else mesh_seed,
                         texture_seed=43 if texture_seed is None else texture_seed,
                         target_face_num=80000 if target_face_num is None else target_face_num,

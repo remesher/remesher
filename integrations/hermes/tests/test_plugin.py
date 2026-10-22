@@ -27,6 +27,69 @@ def load_plugin() -> Any:
 
 
 class PluginTests(unittest.TestCase):
+    def test_quality_environment_defaults_are_integers(self):
+        plugin, image = self.fixture('pass\n')
+        with patch.dict(os.environ, {'REMESHER_BACKEND': 'native',
+                                     'REMESHER_NATIVE_ATLAS_RESOLUTION': '4096',
+                                     'REMESHER_REPAIR_RESOLUTION': '768'}):
+            cfg = plugin.settings()
+            self.assertEqual(cfg['native_atlas_resolution'], 4096)
+            self.assertEqual(cfg['repair_resolution'], 768)
+            for value in ('true', '4096.0', '', '2048'):
+                with patch.dict(os.environ, {'REMESHER_NATIVE_ATLAS_RESOLUTION': value}):
+                    with self.assertRaises(ValueError):
+                        plugin.settings()
+
+    def test_settings_reject_invalid_quality_defaults(self):
+        plugin, image = self.fixture('pass\n')
+        with patch.dict(os.environ, {"REMESHER_BACKEND": "native"}):
+            cfg = plugin.settings()
+        for extra in ({'native_atlas_resolution': True}, {'native_atlas_resolution': 2048},
+                      {'repair_resolution': True}, {'repair_resolution': 0},
+                      {'native_atlas_resolution': 4096, 'backend': 'comfy3d'}):
+            with self.assertRaises(ValueError):
+                plugin.validate_settings({**cfg, **extra})
+
+    def test_repair_atlas_settings_defaults_and_request_override(self):
+        plugin, image = self.fixture('pass\n')
+        with patch.dict(os.environ, {"REMESHER_BACKEND": "native"}):
+            cfg = plugin.settings()
+        cfg.update(native_atlas_resolution=4096, repair_resolution=768)
+        settings_file = self.root / 'quality-settings.json'
+        settings_file.write_text(json.dumps(cfg))
+        with patch.dict(os.environ, {'REMESHER_SETTINGS': str(settings_file)}):
+            self.assertEqual(plugin.settings()['native_atlas_resolution'], 4096)
+        with patch.object(plugin, 'settings', return_value=cfg):
+            for extra, atlas in [({}, '4096'), ({'native_atlas_resolution': 1024}, None)]:
+                result = plugin.generate({'image': str(image), 'no_decimation': True,
+                                          'mesh_repair': 'solid', **extra})
+                self.assertEqual(result['status'], 'queued', result)
+                argv = json.loads((Path(result['log_path']).parent / 'request.json').read_text())['argv']
+                self.assertEqual(argv[argv.index('--repair-resolution') + 1], '768')
+                if atlas:
+                    self.assertEqual(argv[argv.index('--native-atlas-resolution') + 1], atlas)
+                else:
+                    self.assertNotIn('--native-atlas-resolution', argv)
+                self.wait_job(plugin, result['job_id'])
+
+    def test_native_atlas_forwarded(self):
+        plugin, image = self.fixture('pass\n')
+        with patch.dict(os.environ, {"REMESHER_BACKEND": "native"}):
+            result = plugin.generate({"image": str(image), "native_atlas_resolution": 4096})
+        self.assertEqual(result['status'], 'queued', result)
+        argv = json.loads((Path(result['log_path']).parent / 'request.json').read_text())['argv']
+        self.assertIn('--native-atlas-resolution', argv)
+        self.assertEqual(argv[argv.index('--native-atlas-resolution') + 1], '4096')
+        self.wait_job(plugin, result['job_id'])
+
+    def test_native_atlas_invalid_and_legacy_rejected(self):
+        plugin, image = self.fixture('pass\n')
+        for backend, values in [('native', (True, 2048, 4096.0, '4096', None)), ('comfy3d', (4096,))]:
+            with patch.dict(os.environ, {"REMESHER_BACKEND": backend}):
+                for value in values:
+                    result = plugin.generate({'image': str(image), 'native_atlas_resolution': value})
+                    self.assertEqual(result['status'], 'invalid_request', result)
+
     def test_native_cascade_and_frozen_camera_forwarded(self):
         plugin, image = self.fixture('pass\n')
         with patch.dict(os.environ, {"REMESHER_BACKEND": "native"}):

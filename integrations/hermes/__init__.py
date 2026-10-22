@@ -336,6 +336,11 @@ def _generate(args):
             raise ValueError("no_decimation requires a native backend")
         repair = args.get("mesh_repair", "none")
         shape_resolution = args.get("native_shape_resolution", 512)
+        atlas_resolution = args.get("native_atlas_resolution", cfg.get("native_atlas_resolution", 1024))
+        if type(atlas_resolution) is not int or atlas_resolution not in (1024, 4096):
+            raise ValueError("native_atlas_resolution must be 1024 or 4096")
+        if atlas_resolution != 1024 and cfg["backend"] == "comfy3d":
+            raise ValueError("native_atlas_resolution requires a native backend")
         camera_angle = args.get("native_camera_angle")
         if type(shape_resolution) is not int or shape_resolution not in (512, 1536):
             raise ValueError("native_shape_resolution must be 512 or 1536")
@@ -349,7 +354,7 @@ def _generate(args):
             raise ValueError("mesh_repair must be none, fill or solid")
         if repair != "none" and (cfg["backend"] == "comfy3d" or not no_decimation):
             raise ValueError("mesh_repair requires a native backend and no_decimation")
-        resolution = args.get("repair_resolution", 512)
+        resolution = args.get("repair_resolution", cfg.get("repair_resolution", 512))
         perimeter = args.get("repair_max_perimeter", 0.03)
         small = args.get("repair_drop_small_components", 0.005)
         if type(resolution) is not int or not 32 <= resolution <= 2048:
@@ -391,6 +396,7 @@ def _generate(args):
             "--filename-prefix",
             "hermes_" + job_id,
             *(["--native-shape-resolution", str(shape_resolution)] if shape_resolution != 512 else []),
+            *(["--native-atlas-resolution", str(atlas_resolution)] if atlas_resolution != 1024 else []),
             *(["--native-camera-angle", str(camera_angle)] if camera_angle is not None else []),
             *(["--no-decimation"] if no_decimation else ["--target-face-num", str(faces)]),
             *(["--mesh-repair", repair, "--repair-resolution", str(resolution),
@@ -435,6 +441,8 @@ ENVIRONMENT_KEYS = {
     "PYTORCH_CUDA_ALLOC_CONF",
 }
 SETTING_KEYS = {
+    "native_atlas_resolution",
+    "repair_resolution",
     "cli",
     "backend",
     "config",
@@ -514,6 +522,14 @@ def validate_settings(raw):
     cfg.setdefault("backend", "comfy3d")
     if cfg["backend"] not in ("comfy3d", "native", "native-local"):
         raise ValueError("backend must be comfy3d, native or native-local")
+    atlas = cfg.get("native_atlas_resolution", 1024)
+    repair = cfg.get("repair_resolution", 512)
+    if type(atlas) is not int or atlas not in (1024, 4096):
+        raise ValueError("native_atlas_resolution must be 1024 or 4096")
+    if type(repair) is not int or not 32 <= repair <= 2048:
+        raise ValueError("repair_resolution must be an integer from 32 to 2048")
+    if atlas != 1024 and cfg["backend"] == "comfy3d":
+        raise ValueError("native_atlas_resolution requires a native backend")
     cfg["cli"] = existing_path(cfg.get("cli"), "cli", executable=True)
     if "native_config" in cfg:
         if cfg["backend"] != "native-local":
@@ -597,13 +613,15 @@ def settings():
     if filename:
         path = existing_path(filename, "REMESHER_SETTINGS")
         return validate_settings(json.loads(Path(path).read_text()))
-    return validate_settings(
-        {
-            key: os.environ["REMESHER_" + key.upper()]
-            for key in SETTING_KEYS - {"environment"}
-            if "REMESHER_" + key.upper() in os.environ
-        }
-    )
+    raw: dict[str, str | int] = {
+        key: os.environ["REMESHER_" + key.upper()]
+        for key in SETTING_KEYS - {"environment"}
+        if "REMESHER_" + key.upper() in os.environ
+    }
+    for key in ("native_atlas_resolution", "repair_resolution"):
+        if key in raw:
+            raw[key] = int(raw[key])
+    return validate_settings(raw)
 
 
 def backend_arguments(cfg, folder):
@@ -736,6 +754,10 @@ def register(ctx):
                 "native_shape_resolution": {
                     "type": "integer", "enum": [512, 1536], "default": 512,
                     "description": "Native generation grid; 1536 adds official refinement, never falls back. Repair and atlas unchanged.",
+                },
+                "native_atlas_resolution": {
+                    "type": "integer", "enum": [1024, 4096], "default": 1024,
+                    "description": "UV unwrap and PBR bake atlas size; no geometry or generation-resolution change.",
                 },
                 "native_camera_angle": {
                     "type": "number", "minimum": 1, "maximum": 170,

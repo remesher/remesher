@@ -37,6 +37,8 @@ The opt-in [512-to-1536 shape cascade](docs/native-shape-cascade.md) preserves
 512 defaults and does not change repair/atlas settings. See the
 [controlled wrestler result](docs/pixal1536-acceptance.md) for provisional quality,
 resource evidence and remaining independent-review gate.
+The separate [repair768 / atlas4096 controls and experiment](docs/native-repair-atlas.md)
+retain old defaults; sharper detail does not fix the inferred back or fused hands.
 
 A separate read-only combined-editor inventory check remains available:
 
