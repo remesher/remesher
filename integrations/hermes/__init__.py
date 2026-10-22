@@ -335,6 +335,16 @@ def _generate(args):
         if no_decimation and cfg["backend"] == "comfy3d":
             raise ValueError("no_decimation requires a native backend")
         repair = args.get("mesh_repair", "none")
+        shape_resolution = args.get("native_shape_resolution", 512)
+        camera_angle = args.get("native_camera_angle")
+        if type(shape_resolution) is not int or shape_resolution not in (512, 1536):
+            raise ValueError("native_shape_resolution must be 512 or 1536")
+        if camera_angle is not None and (
+            type(camera_angle) not in (int, float) or not 1 <= camera_angle <= 170
+        ):
+            raise ValueError("native_camera_angle must be finite and between 1 and 170")
+        if cfg["backend"] == "comfy3d" and (shape_resolution != 512 or camera_angle is not None):
+            raise ValueError("shape resolution/camera override requires a native backend")
         if repair not in ("none", "fill", "solid"):
             raise ValueError("mesh_repair must be none, fill or solid")
         if repair != "none" and (cfg["backend"] == "comfy3d" or not no_decimation):
@@ -380,6 +390,8 @@ def _generate(args):
             *([] if "native_config" in cfg else ["--out-dir", str(folder / "output")]),
             "--filename-prefix",
             "hermes_" + job_id,
+            *(["--native-shape-resolution", str(shape_resolution)] if shape_resolution != 512 else []),
+            *(["--native-camera-angle", str(camera_angle)] if camera_angle is not None else []),
             *(["--no-decimation"] if no_decimation else ["--target-face-num", str(faces)]),
             *(["--mesh-repair", repair, "--repair-resolution", str(resolution),
                "--repair-max-perimeter", str(perimeter),
@@ -720,6 +732,14 @@ def register(ctx):
                     "type": "boolean",
                     "default": False,
                     "description": "Native only: bypass simplification with no face/vertex cap; retain UV/PBR export.",
+                },
+                "native_shape_resolution": {
+                    "type": "integer", "enum": [512, 1536], "default": 512,
+                    "description": "Native generation grid; 1536 adds official refinement, never falls back. Repair and atlas unchanged.",
+                },
+                "native_camera_angle": {
+                    "type": "number", "minimum": 1, "maximum": 170,
+                    "description": "Optional Pixal3D horizontal FoV override in degrees; omit for MoGe.",
                 },
                 "mesh_repair": {
                     "type": "string", "enum": ["none", "fill", "solid"],

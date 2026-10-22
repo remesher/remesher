@@ -1,9 +1,10 @@
-"""Native 512-resolution single-image TRELLIS.2/Pixal3D API workflow.
+"""Native single-image TRELLIS.2/Pixal3D API workflow.
 
 Derived from ComfyUI 7a28332047b6af638dc6c7f72ef3481a718769fd.
 No custom nodes, editor widgets, preview dependencies or lazy switches.
 Input should be a cropped, background-clean object image. This is not the
-1536-resolution official editor preset, or a rigging/animation backend.
+full official editor preset, or a rigging/animation backend. Shape defaults to
+512; opt-in 1536 adds the official two-node shape cascade only.
 """
 
 from __future__ import annotations
@@ -36,7 +37,10 @@ def build_prompt(
     repair_drop_small_components=0.005,
     filename_prefix="remesher",
     camera_angle=None,
+    shape_resolution=512,
 ):
+    if type(shape_resolution) is not int or shape_resolution not in {512, 1536}:
+        raise ValueError("native shape resolution must be 512 or 1536")
     if model not in {"trellis2", "pixal3d"}:
         raise ValueError("native model must be trellis2 or pixal3d")
     if mesh_repair not in {"none", "fill", "solid"}:
@@ -117,7 +121,7 @@ def build_prompt(
         "structure_model", "ModelSamplingSD3", model=structure_rescale, shift=5.0
     )
 
-    def sample(key, model_link, positive, negative, latent, seed, steps, cfg):
+    def sample(key, model_link, positive, negative, latent, seed, steps, cfg, scheduler="normal"):
         return node(
             key,
             "KSampler",
@@ -129,7 +133,7 @@ def build_prompt(
             steps=steps,
             cfg=cfg,
             sampler_name="euler",
-            scheduler="normal",
+            scheduler=scheduler,
             denoise=1.0,
         )
 
@@ -176,12 +180,21 @@ def build_prompt(
         20,
         7.5,
     )
+    shape_conditioning = "shape_stage"
+    if shape_resolution == 1536:
+        node("shape_upsample", "Trellis2UpsampleStage",
+             positive=["shape_stage", 0], negative=["shape_stage", 1],
+             shape_latent=shape, vae=shape_vae, target_resolution=1536)
+        shape = sample("shape_refine", shape_model,
+                       ["shape_upsample", 0], ["shape_upsample", 1],
+                       ["shape_upsample", 2], mesh_seed, 12, 7.5, scheduler="simple")
+        shape_conditioning = "shape_upsample"
     mesh = node("shape_decode", "VaeDecodeShapeTrellis", samples=shape, vae=shape_vae)
     node(
         "texture_stage",
         "Trellis2TextureStage",
-        positive=["shape_stage", 0],
-        negative=["shape_stage", 1],
+        positive=[shape_conditioning, 0],
+        negative=[shape_conditioning, 1],
         shape_latent=shape,
     )
     texture = sample(

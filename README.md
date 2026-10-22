@@ -33,6 +33,10 @@ native-local --native-config /absolute/native-setup.json`. See the
 [setup CLI/plugin contract and acceptance task index](docs/native-setup.md).
 See [native backend usage and acceptance gates](docs/native-comfy-backend.md)
 for launcher arguments, workflow scope, model prerequisites and limitations.
+The opt-in [512-to-1536 shape cascade](docs/native-shape-cascade.md) preserves
+512 defaults and does not change repair/atlas settings. See the
+[controlled wrestler result](docs/pixal1536-acceptance.md) for provisional quality,
+resource evidence and remaining independent-review gate.
 
 A separate read-only combined-editor inventory check remains available:
 

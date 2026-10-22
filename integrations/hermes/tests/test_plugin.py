@@ -27,6 +27,28 @@ def load_plugin() -> Any:
 
 
 class PluginTests(unittest.TestCase):
+    def test_native_cascade_and_frozen_camera_forwarded(self):
+        plugin, image = self.fixture('pass\n')
+        with patch.dict(os.environ, {"REMESHER_BACKEND": "native"}):
+            result = plugin.generate({"image": str(image), "native_shape_resolution": 1536,
+                                      "native_camera_angle": 42.75103780924466})
+        self.assertEqual(result['status'], 'queued', result)
+        argv = json.loads((Path(result['log_path']).parent / 'request.json').read_text())['argv']
+        self.assertIn('--native-shape-resolution', argv)
+        self.assertEqual(argv[argv.index('--native-shape-resolution') + 1], '1536')
+        self.assertEqual(argv[argv.index('--native-camera-angle') + 1], '42.75103780924466')
+        self.wait_job(plugin, result['job_id'])
+
+    def test_native_cascade_invalid_and_legacy_rejected(self):
+        plugin, image = self.fixture('pass\n')
+        for value in (True, 1024, 1536.0, '1536', 1536):
+            result = plugin.generate({'image': str(image), 'native_shape_resolution': value})
+            self.assertEqual(result['status'], 'invalid_request', result)
+        with patch.dict(os.environ, {"REMESHER_BACKEND": "native"}):
+            for value in (True, float('nan'), 0, 171, '45'):
+                result = plugin.generate({'image': str(image), 'native_camera_angle': value})
+                self.assertEqual(result['status'], 'invalid_request', result)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
