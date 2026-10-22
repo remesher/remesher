@@ -88,11 +88,21 @@ hermes plugins doctor /absolute/remesher/integrations/hermes --ci
 hermes plugins validate /absolute/remesher/integrations/hermes --json
 ```
 
-With authorization, copy that directory (including `scripts/` and `skills/`)
-into the **intended** `$HERMES_HOME/plugins/remesher`, only if the target does not
-already exist. Enable it using `hermes plugins enable remesher` in that home,
-and start a fresh session. For evaluation, set `HERMES_HOME` to a new disposable
-directory; do not mutate your active profile or its Python packages.
+With authorization, use the tested Git-subdirectory installer with the exact
+reviewed integration/release SHA, in the intended home:
+
+```sh
+: "${REMESHER_REVISION:?Set the approved full 40-character commit SHA}"
+HERMES_HOME=/absolute/disposable-hermes hermes plugins install \
+  remesher/remesher/integrations/hermes --ref "$REMESHER_REVISION" --yes-deps --enable
+```
+
+This is a custom-source install, not catalog admission. It includes the scripts
+and skills; start a fresh session in that home. For evaluation use a new
+disposable directory; do not mutate your active profile or its Python packages.
+Hermes 0.22.2 is the validated SDK floor. License is currently explicitly
+UNLICENSED pending the owner's decision; see the bundled
+[catalog preparation notes](../integrations/hermes/CATALOG.md).
 
 Publish settings with the bundled configuration script:
 

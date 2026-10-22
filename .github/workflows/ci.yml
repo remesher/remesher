@@ -98,7 +98,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: NousResearch/hermes-agent
-          ref: 9e01b44dd23978f9ff40b7837467f3a9f1582130
+          ref: d923a5eb487a17c0a68801bba9ef0f56c81040a8 # official v0.22.2 floor
           path: .ci-hermes-sdk
           persist-credentials: false
       - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6
@@ -113,6 +113,12 @@ jobs:
         run: |
           export HERMES_HOME="$RUNNER_TEMP/hermes-profile"
           export PYTHONPATH="$PWD/.ci-hermes-sdk"
+          # Canonical upstream stamp for the immutable official v0.22.2 source;
+          # an unstamped checkout reports 0.0.0 and cannot test the version gate.
+          "$RUNNER_TEMP/hermes-sdk/bin/python" .ci-hermes-sdk/scripts/write_install_stamp.py \
+            --output .ci-hermes-sdk/install-stamp.json \
+            --commit d923a5eb487a17c0a68801bba9ef0f56c81040a8 \
+            --base-version 0.22.2 --distance 0 --source ci --update-mechanism external
           "$RUNNER_TEMP/hermes-sdk/bin/python" scripts/verify-plugin-sdk.py integrations/hermes
           # Missing SDK dependencies must fail, not skip or pass via a mock.
           if "$RUNNER_TEMP/hermes-sdk/bin/python" -S scripts/verify-plugin-sdk.py integrations/hermes 2> "$RUNNER_TEMP/missing-sdk.log"; then

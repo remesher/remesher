@@ -1,5 +1,13 @@
 name: remesher
-version: 0.2.0
+version: "0.2.1"
+requires_hermes: ">=0.22.2"
+# No license grant exists in this repository; owner must decide before catalog submission.
+license: "UNLICENSED"
+homepage: https://github.com/remesher/remesher
+platforms: [linux]
+provides_hooks: []
+provides_middleware: []
+requires_env: []
 description: Bounded image-to-GLB jobs through an isolated Remesher CLI with comfy3d, native and native-local backends.
 author: Remesher
 provides_tools:

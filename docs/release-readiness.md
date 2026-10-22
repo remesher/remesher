@@ -28,14 +28,16 @@ status is not the current merge queue. Install one integrated revision using
 | Setup child cancellation and absolute artifact deadline | Yes | Real subprocess cancellation + trickling HTTP regressions |
 | Canonical hosted CPU CI | Yes | `.github/workflows/ci.yml`: exact-head remote conclusion required before merge; never infer it from local results |
 | Focused lint | Yes | Fatal correctness on all first-party source/tests/scripts; all Pyflakes rules on native/plugin/new delivery code; no inherited diagnostic suppression |
-| Full test and isolated wheel partitions | Yes | Local full suite **270 passed + 53 subtests, zero skips**; isolated wheel **219 application + 51 plugin tests + 53 subtests, zero skips**. Four release guards were observed failing before CI/script changes. Required skips fail the gate |
-| Hermes SDK doctor and validator | Yes | Immutable SDK `9e01b44dd23978f9ff40b7837467f3a9f1582130`; real discovery registers four tools, catalog validator passes; missing dependencies are errors |
+| Full test and isolated wheel partitions | Yes | Local full suite **272 passed + 53 subtests, zero skips**; isolated wheel **221 application + 51 plugin tests + 53 subtests, zero skips**. Six release/packaging guards were observed failing before their changes. Required skips fail the gate |
+| Hermes SDK doctor and validator | Yes | Official v0.22.2 floor `d923a5eb487a17c0a68801bba9ef0f56c81040a8` and installed SDK `9e01b44dd23978f9ff40b7837467f3a9f1582130` passed; CI pins the floor and uses the upstream install-stamp writer for version admission. Real discovery registers four tools, validator passes; missing dependencies are errors |
 | Clean client installation | Yes | Wheel into independent venv, fresh dependencies, imports from site-packages, both model plans, complete CPU suite and plugin contracts; no GPU inference inferred |
-| Fresh normal-config/plugin Spark acceptance | Separate gate | Parent-owned clean runtime/profile acceptance must bind the tested source/wheel to final application bytes. Reuse official existing weights; no downloads authorized |
+| Fresh normal-config/plugin Spark acceptance | Passed for unchanged executable source | Independent clean archive/client and real Hermes install: both-model 512/no-repair canaries succeeded with existing official weights. Final GLBs rehashed and executable source compared; [scope and receipts](clean-install-acceptance.md). Metadata-only 0.2.1 validation is separate; not fresh CUDA provisioning or 1536 quality |
 | Independent final integration review | Separate gate | Release owner obtains exact-head consolidated review; historical approval limitations are not silently treated as approval |
 | Merge / branch protection / old PR disposition | Not performed by integration worker | Release-owner gate after exact-head CI and review |
 | Docker / package release / plugin catalog | Not published | Docker dispatch defaults `publish=false`; main push no longer launches publishing. Release owner decides distribution |
-| Meshy Hermes reference alignment | Pending research | Parent is checking the shipped Meshy source/catalog/API referenced in the October 22 post `2113139938569179201`. No catalog compatibility claim follows from this plugin's SDK validation. Desktop renderer, animation/gallery UI and messenger 360-degree turntable video are separate follow-up scope, not implemented by this integration |
+| Meshy reference alignment | Packaging only, verified | Kept Python manifest/four-tool ABI; quoted 0.2.1 version, validated Hermes 0.22.2 floor, Linux metadata, explicit UNLICENSED status and pinned external documentation. See `integrations/hermes/CATALOG.md`. No MCP rewrite or catalog admission claim |
+| Desktop viewer/gallery | External ownership | Teknium will integrate this; not a Remesher implementation obligation or release gate. Messenger previews are out of scope |
+| Future hosted service | Product plan only | Paid managed fstack-remesher is future work; no billing/auth/hosted runtime or speculative API added |
 
 ## Canonical commands and contexts
 

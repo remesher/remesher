@@ -36,6 +36,21 @@ def test_sdk_missing_dependencies_fail_meaningfully():
     assert "Missing Hermes SDK dependency" in result.stderr
 
 
+def test_plugin_package_declares_truthful_compatibility():
+    text = (ROOT / "integrations/hermes/plugin.yaml").read_text()
+    assert 'requires_hermes: ">=0.22.2"' in text
+    assert 'license: "UNLICENSED"' in text  # No repository license grant exists.
+    assert "provides_hooks: []" in text
+    assert "provides_middleware: []" in text
+
+
+def test_plugin_readme_survives_subdirectory_install():
+    text = (ROOT / "integrations/hermes/README.md").read_text()
+    assert "../../docs/" not in text
+    assert "--ref" in text
+    assert "catalog" in text
+
+
 def test_wheel_gate_includes_both_models_and_plugin_contracts():
     text = (ROOT / "scripts/verify-native-wheel.sh").read_text()
     assert "pixal3d" in text

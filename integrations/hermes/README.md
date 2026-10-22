@@ -8,7 +8,7 @@ Nothing provisions services, downloads models, or changes an active profile at
 import, registration, doctor, validation, health, or configuration inspection.
 
 Combined native-config real GPU evidence and remaining review/quality gates:
-[TRELLIS wrestler acceptance](../../docs/trellis-plugin-acceptance.md).
+[TRELLIS wrestler acceptance](https://github.com/remesher/remesher/blob/0b2e876e7526d7b9d5bc60607ecc2bb832b8d8b7/docs/trellis-plugin-acceptance.md).
 
 ## Backend and configuration contract
 
@@ -96,7 +96,7 @@ For updates, inspect and publish a new file rather than overwriting a live one.
 
 ### Verified native setup configuration (recommended)
 
-The integrated CLI implements [native-setup](../../docs/native-setup.md).
+The integrated CLI implements [native-setup](https://github.com/remesher/remesher/blob/0b2e876e7526d7b9d5bc60607ecc2bb832b8d8b7/docs/native-setup.md).
 Use its actual JSON contract; do not use legacy Comfy3D downloaders:
 
 ```sh
@@ -181,7 +181,7 @@ For opt-in native mesh repair, `remesher_generate` also accepts `mesh_repair`
 With repair enabled, geometry is repaired before the unchanged UV/PBR stages
 instead of going directly to unwrap. Stage GLBs remain in the owned native run
 output, while plugin assets advertise the final textured GLB only. See
-[portable repair documentation](../../docs/native-portable-repair.md).
+[portable repair documentation](https://github.com/remesher/remesher/blob/0b2e876e7526d7b9d5bc60607ecc2bb832b8d8b7/docs/native-portable-repair.md).
 
 - States: `queued → running → succeeded | failed | timed_out`. A supervisor that
   misses its deadline plus 30 seconds is observed as `interrupted`, never replayed.
@@ -221,11 +221,26 @@ hermes plugins validate /absolute/remesher/integrations/hermes --json
 ```
 
 These inspect the plugin without installing/enabling it. For an authorized
-manual install, copy the **entire** directory (including `scripts` and `skills`)
-to `$HERMES_HOME/plugins/remesher`, avoiding blind overwrite; enable with
-`hermes plugins enable remesher`, start a fresh session and discover
-`remesher:remesher`. This implementation does not perform that installation.
-Catalog listing/approval is separate; a validator pass is not a catalog listing.
+pinned installation into the intended (or new disposable) home:
+
+```sh
+# Set this to the exact reviewed 40-character integration/release commit.
+: "${REMESHER_REVISION:?Set the approved full commit SHA}"
+HERMES_HOME=/absolute/disposable-hermes hermes plugins install \
+  remesher/remesher/integrations/hermes --ref "$REMESHER_REVISION" --yes-deps --enable
+HERMES_HOME=/absolute/disposable-hermes hermes plugins doctor \
+  /absolute/disposable-hermes/plugins/remesher --ci
+HERMES_HOME=/absolute/disposable-hermes hermes plugins validate \
+  /absolute/disposable-hermes/plugins/remesher --install-deps --json
+```
+
+The Git-subdirectory installer was exercised with this repository; it warns
+that this is a custom, unreviewed source, not a catalog listing. Select
+`REMESHER_SETTINGS` separately, restart the intended session, and discover
+`remesher:remesher`. Never overwrite/update a plugin while jobs are active.
+Manual copying of the entire directory remains possible for controlled local
+validation. See [catalog preparation and compatibility](CATALOG.md); admission
+and license approval are separate from passing the validator.
 
 From the repository root:
 
@@ -247,6 +262,8 @@ permissive; these are **transport/lifecycle tests, not node-schema, model or GPU
 inference acceptance**. Missing CLI environment variables cause explicit skips.
 
 Historical Linux ARM64 Spark inference passed with provisional quality; see the
-[current release gates](../../docs/release-readiness.md). Remaining work: stronger glTF validation, remote IDs and
-safe reconciliation/cancellation, quotas/retention, job browsing, desktop viewer,
-catalog publication, MCP, text-to-3D and rigging.
+[current release gates](https://github.com/remesher/remesher/blob/0b2e876e7526d7b9d5bc60607ecc2bb832b8d8b7/docs/release-readiness.md). Remaining work: stronger glTF validation, remote IDs and
+safe reconciliation/cancellation, quotas/retention, job browsing, catalog publication,
+MCP, text-to-3D and rigging. Desktop viewing/gallery is an external Teknium
+integration, not this release's implementation obligation. Future paid hosted
+fstack-remesher is a product plan only; no billing/auth/hosted runtime is added.
