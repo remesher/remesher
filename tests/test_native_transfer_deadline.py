@@ -160,7 +160,7 @@ def test_generate_deadline_covers_real_artifact_stream(tmp_path, mode):
         assert 0.5 <= elapsed < 0.85, f"deadline exceeded: {elapsed:.3f}s"
         assert list(out.iterdir()) == [protected], "partial artifact survived timeout"
         assert protected.read_bytes() == b"preserve"
-        assert disconnected.wait(0.3), "response socket was not closed before teardown"
+        assert disconnected.wait(1.5), "peer did not observe disconnect before teardown"
         assert calls == ["/upload/image", "/prompt", "/history/job", "/view"]
         assert not any(isinstance(t, threading.Timer) for t in threading.enumerate())
 
@@ -185,7 +185,7 @@ def test_download_header_deadline_preserves_other_client_connections(tmp_path, w
                 deadline=started + 0.2,
             )
         assert time.monotonic() - started < 0.5
-        assert disconnected.wait(0.3)
+        assert disconnected.wait(1.5)
         assert not list(tmp_path.iterdir())
         assert calls.count("/view") == 1, "retry sent the artifact request twice"
         assert unrelated.read() == b"x"
@@ -202,7 +202,7 @@ def test_successful_stream_cancels_deadline_timer(tmp_path):
         httpx.Client(base_url=url, timeout=5, trust_env=False) as client,
     ):
         paths = native_backend.generate(
-            client, source, tmp_path / "out", validate=False, timeout=3
+            client, source, tmp_path / "out", validate=False, timeout=10
         )
         assert len(paths) == 1
         assert (

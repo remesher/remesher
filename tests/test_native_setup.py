@@ -248,7 +248,8 @@ def test_config_routes_native_local_and_output(tmp_path, monkeypatch):
     assert "conflict" in conflict.output
 
 
-def test_install_refuses_existing_unmanaged_venv(tmp_path):
+def test_install_refuses_existing_unmanaged_venv(tmp_path, monkeypatch):
+    monkeypatch.setattr("comfy_prompt_cli.native_setup.platform.system", lambda: "Linux")
     import pytest
 
     from comfy_prompt_cli.native_setup import SetupConfig, install

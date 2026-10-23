@@ -15,8 +15,10 @@ The compatibility floor is Hermes **0.22.2**, validated against the official
 v0.22.2 commit `d923a5eb487a17c0a68801bba9ef0f56c81040a8` and the later installed
 SDK `9e01b44dd23978f9ff40b7837467f3a9f1582130`. CI uses an immutable official
 SDK revision and actual doctor/validator, not stubs. Platform metadata says
-Linux; actual native inference acceptance is Linux ARM64 NVIDIA Spark. POSIX
-code alone does not certify macOS, Windows, MPS, ROCm or CPU model execution.
+Linux and macOS. Linux ARM64 NVIDIA Spark has native inference acceptance;
+macOS has direct-graph MPS evidence plus separate real CLI fixture transport.
+See [macOS scope and remaining acceptance gate](MACOS.md). Windows, ROCm and
+universal CPU/model execution are not certified.
 
 ## License decision is explicit, not inferred
 
@@ -36,9 +38,9 @@ Hermes catalog PR with:
 
 - repo `https://github.com/remesher/remesher`, subdir `integrations/hermes`;
 - the actual full 40-character reviewed commit SHA, not a branch/tag/placeholder;
-- matching plugin version `0.2.1`, `license: "Apache-2.0"`,
+- matching plugin version `0.3.0`, `license: "Apache-2.0"`,
   `requires_hermes: ">=0.22.2"`, category `tools`,
-  tier `community` (only Nous assigns official/verified), platforms `[linux]`;
+  tier `community` (only Nous assigns official/verified), platforms `[linux, macos]`;
 - the exact four tool names above and empty hook/middleware/required-env lists;
 - disclosure of local subprocesses, detached supervisors, local image reads and
   upload to the configured ComfyUI server, optional owned GPU runtime, persistent

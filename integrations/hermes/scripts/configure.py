@@ -43,6 +43,7 @@ def main():
             )
         elif cfg["backend"] == "native-local":
             checkout = Path(cfg["native_checkout"])
+            models = Path(cfg["native_models"]) if "native_models" in cfg else checkout / "models"
             model = "trellis_2" if cfg["native_model"] == "trellis2" else "pixal3d"
             names = [
                 f"diffusion_models/{model}_int8_convrot.safetensors",
@@ -51,7 +52,7 @@ def main():
                 "vae/trellis_2_texture_vae_bf16.safetensors",
             ]
             report["default_model_files_present"] = {
-                name: (checkout / "models" / name).is_file() for name in names
+                name: (models / name).is_file() for name in names
             }
             report["extra_model_paths_file_present"] = (
                 checkout / "extra_model_paths.yaml"

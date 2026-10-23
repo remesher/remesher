@@ -108,6 +108,10 @@ def assets(args):
     }
 
 
+class CleanupPendingError(RuntimeError):
+    """An owned process did not reap after bounded SIGKILL grace."""
+
+
 def run_cli(argv, folder, timeout, env):
     """Drain output without buffering indefinitely; terminate the entire POSIX CLI group."""
     deadline = time.monotonic() + timeout
@@ -166,8 +170,12 @@ def run_cli(argv, folder, timeout, env):
                 os.killpg(process.pid, signal.SIGKILL)
             except ProcessLookupError:
                 pass
-            process.wait()
-            process.stdout.close()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                raise CleanupPendingError("Owned CLI cleanup pending after SIGKILL; inspect before retrying") from None
+            finally:
+                process.stdout.close()
         return process.returncode, timed_out
 
 
@@ -273,6 +281,8 @@ def _worker_locked(folder, state):
             state.setdefault(
                 "error", "CLI failed or local deadline expired; inspect cli.log"
             )
+    except CleanupPendingError as exc:
+        state.update(status="failed", assets=[], cleanup_pending=True, error=str(exc))
     except TimeoutError:
         state.update(
             status="timed_out",
@@ -301,10 +311,11 @@ def generate(args):
         with (root / ".admission.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             for path in root.glob("*/state.json"):
-                if read_state(path.parent)["status"] in ("queued", "running"):
+                previous = read_state(path.parent)
+                if previous["status"] in ("queued", "running") or previous.get("cleanup_pending"):
                     return {
                         "status": "busy",
-                        "error": "One local job is already active; poll its job_id",
+                        "error": "A local job is active or cleanup is pending; inspect its receipt before retrying",
                     }
             return _generate(args)
     except (OSError, ValueError, KeyError, TypeError):
@@ -371,8 +382,9 @@ def _generate(args):
                                    (small, 0.5, "repair_drop_small_components")):
             if type(value) not in (int, float) or not 0 <= value <= upper:
                 raise ValueError(f"{name} must be finite and between 0 and {upper}")
-        if type(timeout) is not int or not 1 <= timeout <= 1800:
-            raise ValueError("timeout_seconds must be an integer from 1 to 1800")
+        limit = cfg.get("max_timeout_seconds", 1800)
+        if type(timeout) is not int or not 1 <= timeout <= limit:
+            raise ValueError(f"timeout_seconds must be an integer from 1 to {limit}")
         if type(faces) is not int or not 1000 <= faces <= 200000:
             raise ValueError("target_face_num must be an integer from 1000 to 200000")
         root = data_root() / "jobs"
@@ -441,6 +453,8 @@ def _generate(args):
 
 
 ENVIRONMENT_KEYS = {
+    "PYTORCH_ENABLE_MPS_FALLBACK",
+    "OMP_NUM_THREADS",
     "CUDA_VISIBLE_DEVICES",
     "HF_HOME",
     "HF_HUB_CACHE",
@@ -450,6 +464,8 @@ ENVIRONMENT_KEYS = {
     "PYTORCH_CUDA_ALLOC_CONF",
 }
 SETTING_KEYS = {
+    "max_timeout_seconds",
+    "native_models",
     "native_preset",
     "native_atlas_resolution",
     "repair_resolution",
@@ -554,6 +570,9 @@ def validate_settings(raw):
     if not isinstance(raw, dict) or raw.keys() - SETTING_KEYS:
         raise ValueError("Settings must be an object with only documented keys")
     cfg = dict(raw)
+    limit = cfg.get("max_timeout_seconds", 1800)
+    if type(limit) is not int or not 900 <= limit <= 43200:
+        raise ValueError("max_timeout_seconds must be an integer from 900 to 43200")
     cfg.setdefault("backend", "comfy3d")
     if cfg["backend"] not in ("comfy3d", "native", "native-local"):
         raise ValueError("backend must be comfy3d, native or native-local")
@@ -575,6 +594,7 @@ def validate_settings(raw):
             raise ValueError("native_config requires native-local")
         if cfg.keys() & {
             "native_python",
+            "native_models",
             "native_checkout",
             "native_device",
             "native_server",
@@ -607,8 +627,8 @@ def validate_settings(raw):
                 str(Path(cfg["native_checkout"]) / "main.py"), "native_checkout/main.py"
             )
             cfg.setdefault("native_device", "cuda")
-            if cfg["native_device"] not in ("cuda", "cpu"):
-                raise ValueError("native_device must be cuda or cpu")
+            if cfg["native_device"] not in ("cuda", "cpu", "mps"):
+                raise ValueError("native_device must be cuda, cpu or mps")
         else:
             cfg.setdefault("native_server", "http://127.0.0.1:8188")
             server = cfg["native_server"]
@@ -628,12 +648,20 @@ def validate_settings(raw):
                 or (url.port is not None and not 1 <= url.port <= 65535)
             ):
                 raise ValueError("native_server must be a numeric loopback HTTP origin")
+    if "native_models" in cfg:
+        if cfg["backend"] != "native-local":
+            raise ValueError("native_models requires native-local")
+        cfg["native_models"] = existing_path(cfg["native_models"], "native_models", directory=True)
     environment = cfg.setdefault("environment", {})
     if not isinstance(environment, dict) or environment.keys() - ENVIRONMENT_KEYS:
         raise ValueError("environment contains unsupported keys")
     for key, value in environment.items():
         if not isinstance(value, str) or "\x00" in value or "\n" in value:
             raise ValueError("environment values must be single-line strings")
+        if key == "PYTORCH_ENABLE_MPS_FALLBACK" and value not in {"0", "1"}:
+            raise ValueError("PYTORCH_ENABLE_MPS_FALLBACK must be 0 or 1")
+        if key == "OMP_NUM_THREADS" and (not value.isascii() or not value.isdecimal() or not 1 <= int(value) <= 64):
+            raise ValueError("OMP_NUM_THREADS must be an integer string from 1 to 64")
         if key in {
             "HF_HOME",
             "HF_HUB_CACHE",
@@ -657,7 +685,7 @@ def settings():
         for key in SETTING_KEYS - {"environment"}
         if "REMESHER_" + key.upper() in os.environ
     }
-    for key in ("native_atlas_resolution", "repair_resolution"):
+    for key in ("native_atlas_resolution", "repair_resolution", "max_timeout_seconds"):
         if key in raw:
             raw[key] = int(raw[key])
     return validate_settings(raw)
@@ -682,6 +710,8 @@ def backend_arguments(cfg, folder):
         return argv + ["--native-config", str(snapshot)]
     for name in ("native_python", "native_checkout", "native_device"):
         argv += ["--" + name.replace("_", "-"), cfg[name]]
+    if "native_models" in cfg:
+        argv += ["--native-models", cfg["native_models"]]
     return argv + ["--native-runs", str(folder / "native-runs")]
 
 
@@ -752,7 +782,7 @@ def health(args):
             "returncode": code,
             "gpu_generation_verified": False,
         }
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, CleanupPendingError) as exc:
         return {
             "status": "unavailable",
             "error": str(exc),
@@ -782,7 +812,8 @@ def register(ctx):
                 "timeout_seconds": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": 1800,
+                    "maximum": 43200,
+                    "description": "Seconds for the whole local job. Default 900; above 1800 requires operator max_timeout_seconds setting (hard cap 43200).",
                     "default": 900,
                 },
                 "native_preset": {

@@ -1,10 +1,10 @@
 name: remesher
-version: "0.2.1"
+version: "0.3.0"
 requires_hermes: ">=0.22.2"
 # Owner-approved license for Remesher code; third-party materials retain their terms.
 license: "Apache-2.0"
 homepage: https://github.com/remesher/remesher
-platforms: [linux]
+platforms: [linux, macos]
 provides_hooks: []
 provides_middleware: []
 requires_env: []
