@@ -1036,7 +1036,7 @@ def image_to_glb(
     native_python: Annotated[Path | None, typer.Option(help="Absolute Python executable for native-local; no auto-install.")] = None,
     native_checkout: Annotated[Path | None, typer.Option(help="Absolute ComfyUI checkout for native-local.")] = None,
     native_runs: Annotated[Path, typer.Option(help="Private per-run native-local directories and retained logs.")] = Path("native-runs"),
-    native_device: str = typer.Option("cuda", help="Explicit native-local device policy: cuda or cpu; not hardware certification."),
+    native_device: str = typer.Option("cuda", help="Explicit native-local device policy: cuda, cpu or mps; MPS uses ComfyUI autodetection with an effective-device check."),
     native_port: int = typer.Option(0, min=0, max=65535, help="native-local loopback port; 0 chooses an unused port."),
     native_startup_timeout: float = typer.Option(120, min=1, help="native-local startup deadline seconds."),
     native_model: str = typer.Option("trellis2", help="Native diffusion branch: trellis2 or pixal3d."),
@@ -1075,6 +1075,11 @@ def image_to_glb(
     ),
 ) -> None:
     """Convert image to GLB; legacy Comfy3D remains the default backend."""
+    if backend != "comfy3d":
+        import math
+
+        if not math.isfinite(timeout) or timeout > 43200:
+            raise typer.BadParameter("native timeout must be finite and at most 43200 seconds")
     if backend not in {"comfy3d", "native", "native-local"}:
         raise typer.BadParameter("backend must be comfy3d, native or native-local")
     if native_preset is not None:

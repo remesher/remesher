@@ -18,6 +18,10 @@ from pathlib import Path
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from comfy_prompt_cli.native_backend import build_prompt
 Path(__file__).with_name('pid').write_text(str(os.getpid()))
+if '--extra-model-paths-config' in sys.argv:
+    assert '--cuda-device' not in sys.argv and '--cpu' not in sys.argv and '--mps' not in sys.argv
+    model_config = json.loads(Path(sys.argv[sys.argv.index('--extra-model-paths-config') + 1]).read_text())
+    assert Path(model_config['remesher']['base_path']).is_dir()
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass
     def reply(self, data):
@@ -25,7 +29,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200); self.send_header('Content-Length', str(len(body)))
         self.end_headers(); self.wfile.write(body)
     def do_GET(self):
-        if self.path == '/system_stats': return self.reply({'system': {'argv': sys.argv}})
+        if self.path == '/system_stats': return self.reply({'system': {'argv': sys.argv}, 'devices': [{'type': 'mps'}]})
         if self.path == '/object_info':
             info = {}
             for node in build_prompt('source.png', model='pixal3d', shape_resolution=1536,
@@ -100,7 +104,10 @@ class NativeCLIContract(unittest.TestCase):
                 with self.subTest(backend=backend, model=model):
                     self.exercise(backend, preset='quality-1536-solid768', model=model)
 
-    def exercise(self, backend, stall=False, preset=None, model='trellis2'):
+    def test_mps_long_budget_real_cli_transport(self):
+        self.exercise('native-local', device='mps', timeout=43200)
+
+    def exercise(self, backend, stall=False, preset=None, model='trellis2', device='cpu', timeout=15):
         cli = os.environ["REMESHER_TEST_NATIVE_CLI"]
         python = os.environ.get(
             "REMESHER_TEST_NATIVE_PYTHON", str(Path(cli).parent / "python")
@@ -117,9 +124,14 @@ class NativeCLIContract(unittest.TestCase):
                 "backend": backend,
                 "native_python": python,
                 "native_checkout": str(checkout),
-                "native_device": "cpu",
+                "native_device": device,
+                "max_timeout_seconds": max(1800, timeout),
                 "native_model": model,
             }
+            if device == "mps":
+                models = root / "external models"
+                models.mkdir()
+                cfg["native_models"] = str(models)
             if preset:
                 cfg['native_preset'] = preset
             server = None
@@ -150,7 +162,7 @@ class NativeCLIContract(unittest.TestCase):
                     )
                     self.assertFalse(health["gpu_generation_verified"])
                     result = plugin.generate(
-                        {"image": str(image), "timeout_seconds": 3 if stall else 15}
+                        {"image": str(image), "timeout_seconds": 3 if stall else timeout}
                     )
                 self.assertEqual(result["status"], "queued", result)
                 end = time.monotonic() + 25

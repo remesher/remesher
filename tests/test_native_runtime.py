@@ -27,6 +27,28 @@ HTTPServer(('127.0.0.1',port),Handler).serve_forever()
     return root
 
 
+def test_mps_uses_autodetection_and_checks_reported_device(checkout, tmp_path):
+    source = (checkout / "main.py").read_text()
+    (checkout / "main.py").write_text(source.replace(
+        '"system":{"argv":sys.argv}', '"system":{"argv":sys.argv},"devices":[{"type":"mps"}]'))
+    with native_runtime.LocalRuntime(
+        Path(sys.executable), checkout, tmp_path / "runs", device="mps"
+    ) as runtime:
+        assert "--cpu" not in runtime.argv
+        assert "--cuda-device" not in runtime.argv
+        assert "--mps" not in runtime.argv  # pinned ComfyUI has no such flag
+    assert runtime.process.poll() is not None
+
+
+def test_mps_rejects_silent_cpu_fallback_and_cleans_up(checkout, tmp_path):
+    runtime = native_runtime.LocalRuntime(
+        Path(sys.executable), checkout, tmp_path / "runs", device="mps", startup_timeout=2
+    )
+    with pytest.raises(RuntimeError, match="MPS"), runtime:
+        pytest.fail("accepted absent MPS device")
+    assert runtime.process.poll() is not None
+
+
 def test_owned_child_ready_and_reaped(checkout, tmp_path):
     with native_runtime.LocalRuntime(
         Path(sys.executable), checkout, tmp_path / "runs", device="cpu"

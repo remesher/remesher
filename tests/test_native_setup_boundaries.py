@@ -161,6 +161,13 @@ def test_installer_commands_use_owned_venv_and_preserve_torch_pin(
     config = setup.SetupConfig.at_root(tmp_path / "runtime")
     config.checkout.mkdir(parents=True)
     (config.checkout / "requirements.txt").write_text("fixture")
+    # Exercise Linux installer policy explicitly on every POSIX test host.
+    monkeypatch.setattr(setup.platform, "system", lambda: "Linux")
+    if sys.platform == "darwin":
+        # uv's macOS Python uses a relative dylib rpath: copying only its
+        # executable breaks imports. Still create/probe a real isolated venv.
+        builder = setup.venv.EnvBuilder
+        monkeypatch.setattr(setup.venv, "EnvBuilder", lambda **kw: builder(symlinks=True, **kw))
     # Real venv and identity check; replace network package actions only.
     monkeypatch.setattr(setup, "checkout_status", lambda c: {"ok": True})
     calls = []
