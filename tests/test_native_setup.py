@@ -201,6 +201,7 @@ def test_config_routes_native_local_and_output(tmp_path, monkeypatch):
             assert checkout == cfg.checkout
             assert runs == cfg.runs
             assert kw["models"] == cfg.models
+            assert kw["runtime_environment"] == cfg.runtime_environment
             self.base_url, self.run_dir = "http://127.0.0.1:12345", cfg.runs
 
         def __enter__(self):

@@ -1121,6 +1121,7 @@ def image_to_glb(
         raise typer.BadParameter("--mesh-repair must be none, fill or solid")
     if mesh_repair != "none" and (backend == "comfy3d" or not no_decimation):
         raise typer.BadParameter("--mesh-repair requires a native backend and --no-decimation")
+    native_runtime_environment = {}
     if native_config is not None:
         if backend != "native-local":
             raise typer.BadParameter("--native-config requires --backend native-local")
@@ -1139,6 +1140,7 @@ def image_to_glb(
                 raise ValueError("Native setup not ready: " + "; ".join(report["blockers"]))
             native_python, native_checkout, native_runs = setup.python, setup.checkout, setup.runs
             native_models, native_device, out_dir = setup.models, setup.device, setup.output
+            native_runtime_environment = setup.runtime_environment
         except (ValueError, OSError) as exc:
             raise typer.BadParameter(str(exc)) from None
     if backend != "comfy3d" and workflow_file != DEFAULT_IMAGE_TO_GLB_WORKFLOW:
@@ -1174,7 +1176,7 @@ def image_to_glb(
             if backend == "native-local":
                 if native_python is None or native_checkout is None:
                     raise ValueError("native-local requires --native-python and --native-checkout")
-                owner = LocalRuntime(native_python, native_checkout, native_runs, device=native_device, models=native_models, port=native_port, startup_timeout=native_startup_timeout)
+                owner = LocalRuntime(native_python, native_checkout, native_runs, device=native_device, models=native_models, port=native_port, startup_timeout=native_startup_timeout, runtime_environment=native_runtime_environment)
             else:
                 url = urlsplit(native_server)
                 if (url.scheme != "http" or url.hostname not in {"127.0.0.1", "::1"}

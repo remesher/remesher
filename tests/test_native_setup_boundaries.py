@@ -18,7 +18,7 @@ from comfy_prompt_cli.native_download import download, file_lock
         ("venv", "relative"),
         ("models", "/"),
         ("output", "/a/../b"),
-        ("device", "mps"),
+        ("device", "rocm"),
         ("schema_version", 2),
         ("url", "https://evil.test"),
         ("minimum_memory_gib", 0),
@@ -158,7 +158,7 @@ def test_apply_reuse_persists_config_but_not_memory_override(tmp_path, monkeypat
 def test_installer_commands_use_owned_venv_and_preserve_torch_pin(
     tmp_path, monkeypatch
 ):
-    config = setup.SetupConfig.at_root(tmp_path / "runtime")
+    config = setup.SetupConfig.at_root(tmp_path / "runtime").model_copy(update={"device": "cuda"})
     config.checkout.mkdir(parents=True)
     (config.checkout / "requirements.txt").write_text("fixture")
     # Exercise Linux installer policy explicitly on every POSIX test host.

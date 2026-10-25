@@ -292,7 +292,7 @@ assert pathlib.Path(config["output"]).resolve() == (pathlib.Path.cwd() / "output
             json.dumps({**valid, "models": "/x/../y"}),
             json.dumps({**valid, "schema_version": 2}),
             json.dumps({**valid, "extra": True}),
-            json.dumps({**valid, "device": "mps"}),
+            json.dumps({**valid, "device": "rocm"}),
             json.dumps({**valid, "minimum_memory_gib": 0}),
             json.dumps({**valid, "models": valid["venv"]}),
             json.dumps({**valid, "models": valid["venv"] + "/models"}),

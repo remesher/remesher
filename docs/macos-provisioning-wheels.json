@@ -1,0 +1,36 @@
+{
+  "checked_date": "2026-10-24",
+  "scope": "PyPI release metadata; not a fresh install receipt",
+  "releases": [
+    {
+      "source": "https://pypi.org/pypi/torch/2.14.1/json",
+      "wheels": [
+        {
+          "filename": "torch-2.14.1-cp312-cp312-macosx_14_0_arm64.whl",
+          "size": 127307099,
+          "digests": {
+            "blake2b_256": "4b3c379349820e9a6e713826de3d0b88f07728541bdcabe2a3afd128871cdc4b",
+            "md5": "543f017ad84f39b2289524ed312612d3",
+            "sha256": "420dbf314c180ee4b86e9bc00aee5746a7d6e5bacdd7df925af671ed393f0b2e"
+          },
+          "url": "https://files.pythonhosted.org/packages/4b/3c/379349820e9a6e713826de3d0b88f07728541bdcabe2a3afd128871cdc4b/torch-2.14.1-cp312-cp312-macosx_14_0_arm64.whl"
+        }
+      ]
+    },
+    {
+      "source": "https://pypi.org/pypi/torchvision/0.29.1/json",
+      "wheels": [
+        {
+          "filename": "torchvision-0.29.1-cp312-cp312-macosx_14_0_arm64.whl",
+          "size": 1813847,
+          "digests": {
+            "blake2b_256": "f3f8855c7b326ed17a8dac4a03e8e6fec33ef6728e4baa00d816cf1227bb6681",
+            "md5": "125fe98e13da57fe28f20bd35a88c276",
+            "sha256": "3b6eb9d2f8fe9b93d9d37637749df361efeed133d96ddd503184a1b5b12bb27f"
+          },
+          "url": "https://files.pythonhosted.org/packages/f3/f8/855c7b326ed17a8dac4a03e8e6fec33ef6728e4baa00d816cf1227bb6681/torchvision-0.29.1-cp312-cp312-macosx_14_0_arm64.whl"
+        }
+      ]
+    }
+  ]
+}

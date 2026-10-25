@@ -166,13 +166,38 @@ def test_native_backend_rejects_unbounded_timeout_before_network(tmp_path, timeo
         generate(None, tmp_path / "absent.png", tmp_path, timeout=timeout)
 
 
-def test_darwin_installer_refuses_before_mutation(tmp_path, monkeypatch):
+def test_darwin_installer_rejects_unsupported_python_before_mutation(tmp_path, monkeypatch):
     from comfy_prompt_cli import native_setup
 
     monkeypatch.setattr(native_setup.platform, "system", lambda: "Darwin")
-    with pytest.raises(ValueError, match="Linux POSIX only"):
+    monkeypatch.setattr(native_setup.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(native_setup.platform, "python_version", lambda: "3.14.3")
+    with pytest.raises(ValueError, match="3.12.12"):
         native_setup.install(native_setup.SetupConfig.at_root(tmp_path / "runtime"))
     assert not (tmp_path / "runtime").exists()
+
+
+def test_mps_native_config_preserves_environment_policy(tmp_path):
+    from comfy_prompt_cli.native_setup import SetupConfig
+
+    plugin = load_plugin()
+    config = SetupConfig.at_root(tmp_path / "internal").model_copy(
+        update={"device": "mps", "mps_fallback": False, "omp_num_threads": 3}
+    )
+    path = tmp_path / "native.json"
+    path.write_text(config.model_dump_json())
+    cfg = plugin.validate_settings({"cli": sys.executable, "backend": "native-local", "native_config": str(path)})
+    folder = tmp_path / "job"
+    folder.mkdir()
+    argv = plugin.backend_arguments(cfg, folder)
+    snapshot = json.loads(Path(argv[argv.index("--native-config") + 1]).read_text())
+    assert snapshot["device"] == "mps"
+    assert snapshot["mps_fallback"] is False
+    assert snapshot["omp_num_threads"] == 3
+    for field, value in [("mps_fallback", "yes"), ("omp_num_threads", True), ("omp_num_threads", 0)]:
+        path.write_text(json.dumps({**config.model_dump(mode="json"), field: value}))
+        with pytest.raises(ValueError):
+            plugin.read_native_config(path)
 
 
 def test_native_models_rejects_config_mode(tmp_path):
