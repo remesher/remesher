@@ -40,6 +40,24 @@ def test_mps_uses_autodetection_and_checks_reported_device(checkout, tmp_path):
     assert runtime.process.poll() is not None
 
 
+def test_runtime_environment_reaches_child_without_parent_mutation(checkout, tmp_path, monkeypatch):
+    import os
+
+    monkeypatch.setenv("OMP_NUM_THREADS", "9")
+    source = (checkout / "main.py").read_text()
+    (checkout / "main.py").write_text(
+        "import os\nassert os.environ['OMP_NUM_THREADS']=='1'\nassert os.environ['PYTORCH_ENABLE_MPS_FALLBACK']=='0'\n" + source
+    )
+    with native_runtime.LocalRuntime(
+        Path(sys.executable), checkout, tmp_path / "runs", device="cpu",
+        runtime_environment={"OMP_NUM_THREADS": "1", "PYTORCH_ENABLE_MPS_FALLBACK": "0"},
+    ) as runtime:
+        assert runtime.process.poll() is None
+        assert os.environ["OMP_NUM_THREADS"] == "9"
+    with pytest.raises(ValueError, match="environment"):
+        native_runtime.LocalRuntime(Path(sys.executable), checkout, tmp_path / "runs", runtime_environment={"PYTHONPATH": "/bad"})
+
+
 def test_mps_rejects_silent_cpu_fallback_and_cleans_up(checkout, tmp_path):
     runtime = native_runtime.LocalRuntime(
         Path(sys.executable), checkout, tmp_path / "runs", device="mps", startup_timeout=2

@@ -28,9 +28,11 @@ description: Configure and inspect Remesher setup, generate GLBs from local imag
    behavior, not the tested quality recipe. Request preset overrides settings
    preset; explicit scalar controls must agree or the request is rejected.
    Do not mix `native_config` with explicit runtime paths/device/server. For manual native-local, set
-   `native_device` to `cuda`, `cpu` or `mps`. On macOS use the prepared-runtime
-   route in `MACOS.md`, optional explicit `native_models`, not Linux native-config
-   readiness or the CUDA installer. MPS must be reported by the owned server.
+   `native_device` to `cuda`, `cpu` or `mps`. On macOS follow the Apple Silicon
+   provisioning/config route or explicit prepared-runtime route in `MACOS.md`;
+   never use CUDA installer policy for MPS. MPS must be reported by the owned server.
+   Typed config `mps_fallback`/`omp_num_threads` and duplicate plugin environment
+   values must agree, including MPS defaults (fallback=1, OMP=1); conflicts fail.
    Never insert shell strings or extra
    arguments. Device/cache variables must be explicit in `environment`; ambient
    CUDA/HF/Torch variables are scrubbed along with Python/uv activation and tokens.
@@ -64,6 +66,12 @@ description: Configure and inspect Remesher setup, generate GLBs from local imag
    the plugin/CLI do not remove backgrounds. Preserve source/mask/prepared images
    and pad enough to retain hands/feet. Do not mistake gray clothing for background.
    Call `remesher_generate` once with absolute PNG/JPEG/WebP `image` (max 20 MiB).
+   On a low-memory host, obtain explicit user authorization for this generation's
+   memory/swap risk before passing `native_allow_low_memory: true`. It is a strict
+   boolean, false by default, allowed as true only with native-local/native_config.
+   Never persist approval in settings, infer it from provisioning/presets, or
+   automatically retry with approval. The flag only acknowledges memory policy;
+   MPS readiness and model checks remain required. Request and receipt audit it.
    With configured quality, do not pass a face target or old scalar defaults.
    Optional `timeout_seconds`: 1–1800, default 900. For authorized long jobs,
    the operator may set `max_timeout_seconds` up to 43200, then explicitly request

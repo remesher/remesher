@@ -10,7 +10,8 @@ import, registration, doctor, validation, health, or configuration inspection.
 Combined native-config real GPU evidence and remaining review/quality gates:
 [TRELLIS wrestler acceptance](https://github.com/remesher/remesher/blob/0b2e876e7526d7b9d5bc60607ecc2bb832b8d8b7/docs/trellis-plugin-acceptance.md).
 
-macOS/MPS uses a separately prepared runtime, not the Linux setup installer.
+macOS/MPS supports explicit CLI provisioning with a pinned Apple Silicon policy,
+or reuse of a separately prepared runtime; plugin registration never installs it.
 See [macOS configuration, long jobs and evidence limits](MACOS.md).
 
 ## Backend and configuration contract
@@ -72,7 +73,7 @@ Legacy CLI config example: `{"server_url":"http://127.0.0.1:8188/"}`.
 The only explicit `environment` keys are `CUDA_VISIBLE_DEVICES`, `HF_HOME`,
 `HF_HUB_CACHE`, `TORCH_HOME`, `XDG_CACHE_HOME`, `LD_LIBRARY_PATH` and
 `PYTORCH_CUDA_ALLOC_CONF`, `PYTORCH_ENABLE_MPS_FALLBACK` (`0`/`1`) and
-`OMP_NUM_THREADS` (integer strings 1–64). Cache/library paths must be absolute; library lists
+`OMP_NUM_THREADS` (integer strings 1–64, or 1–256 in native-config mode). Cache/library paths must be absolute; library lists
 are colon-separated with no empty entries. These overrides are snapshotted in
 the private request and forwarded to the CLI/native child. Ambient versions of
 these variables are **not** forwarded. HOME, PATH, locale, TMPDIR and TLS
@@ -99,7 +100,7 @@ restart that session after authorized environment changes. Neither script nor
 plugin edits `.env`, `config.yaml`, an installed plugin, or another profile.
 For updates, inspect and publish a new file rather than overwriting a live one.
 
-### Verified native setup configuration (Linux recommended)
+### Verified native setup configuration
 
 The integrated CLI implements [native-setup](https://github.com/remesher/remesher/blob/0b2e876e7526d7b9d5bc60607ecc2bb832b8d8b7/docs/native-setup.md).
 Use its actual JSON contract; do not use legacy Comfy3D downloaders:
@@ -133,6 +134,21 @@ replaced by private job paths**. The original setup config remains unchanged.
 The CLI receives `--native-config`, not conflicting `--out-dir`/runtime flags.
 Its configured model root is passed to the owned child automatically. The
 plugin never changes cgroup limits or acknowledges low-memory risk for you.
+
+For an explicitly user-authorized low-memory generation, supply the per-call
+strict boolean `native_allow_low_memory: true` to `remesher_generate`. The default
+is false. True is rejected outside `native-local` with `native_config`; strings,
+integers and null are rejected. This approval is not a settings/native-config key
+and has no environment or preset equivalent. Setup approval does not carry over.
+Every request and job receipt records `native_allow_low_memory`, including false.
+The flag neither raises resource limits nor bypasses model/device/tensor checks.
+See [macOS admission and acceptance limits](MACOS.md) for 8 GiB hosts.
+
+In config mode, typed `mps_fallback`/`omp_num_threads` determine effective child
+policy (MPS defaults: fallback=1, OMP=1). Duplicate plugin environment values
+must match exactly, including defaults; conflicts are errors, not silent
+overrides. Effective policy is included in the request environment and rechecked
+against the per-job snapshot. Ambient MPS/OMP values remain scrubbed.
 
 The input must already be background-removed and square-composited onto black.
 Neither the plugin nor the generation CLI automatically removes backgrounds.
@@ -187,6 +203,10 @@ Native adds `--backend native --native-model <model> --native-server <origin>`.
 Native-local instead adds `--backend native-local --native-model <model>
 --native-python <python> --native-checkout <checkout> --native-device <device>
 --native-runs <job>/native-runs`. Every argument is a separate argv entry.
+Config mode instead uses `--backend native-local --native-model <model>
+--native-config <job>/native-setup.json`, omitting `--out-dir` and explicit
+runtime flags. Only a true per-job `native_allow_low_memory` adds
+`--native-allow-low-memory`; omitted/false adds neither that flag nor its inverse.
 The CLI owns its port/startup defaults; no unsupported future options are used.
 
 ## Tools and lifecycle

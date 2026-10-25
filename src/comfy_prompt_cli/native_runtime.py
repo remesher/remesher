@@ -26,6 +26,7 @@ class LocalRuntime:
         models: Path | None = None,
         port: int = 0,
         startup_timeout: float = 120,
+        runtime_environment: dict[str, str] | None = None,
     ):
         if os.name != "posix":
             raise ValueError("native-local process ownership currently requires POSIX")
@@ -45,6 +46,19 @@ class LocalRuntime:
             raise ValueError("invalid native port or startup timeout")
         if models is not None and (not models.is_absolute() or not models.is_dir()):
             raise ValueError("native models must be an absolute existing directory")
+        runtime_environment = dict(runtime_environment or {})
+        for key, value in runtime_environment.items():
+            if key == "PYTORCH_ENABLE_MPS_FALLBACK" and value in {"0", "1"}:
+                continue
+            if (
+                key == "OMP_NUM_THREADS"
+                and isinstance(value, str)
+                and value.isdecimal()
+                and 1 <= int(value) <= 256
+            ):
+                continue
+            raise ValueError("Unsupported native runtime environment setting")
+        self.runtime_environment = runtime_environment
         self.models = models
         self.python, self.checkout, self.runs = python, checkout, runs
         self.device, self.port, self.startup_timeout = device, port, startup_timeout
@@ -118,6 +132,7 @@ class LocalRuntime:
             self.process = subprocess.Popen(
                 self.argv,
                 cwd=self.checkout,
+                env={**os.environ, **self.runtime_environment},
                 stdin=subprocess.DEVNULL,
                 stdout=self.log,
                 stderr=subprocess.STDOUT,
@@ -142,15 +157,16 @@ class LocalRuntime:
                         response.raise_for_status()
                         stats = response.json()
                         if (
-                            stats.get("system", {}).get("argv")
-                            == self.argv[1:]
+                            stats.get("system", {}).get("argv") == self.argv[1:]
                             and self.process.poll() is None
                         ):
                             devices = stats.get("devices", [])
                             if self.device == "mps" and (
                                 not devices or devices[0].get("type") != "mps"
                             ):
-                                raise RuntimeError("MPS requested but owned ComfyUI did not report MPS")
+                                raise RuntimeError(
+                                    "MPS requested but owned ComfyUI did not report MPS"
+                                )
                             return self
                     except (httpx.HTTPError, ValueError, AttributeError):
                         pass

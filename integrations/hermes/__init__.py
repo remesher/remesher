@@ -327,6 +327,13 @@ def _generate(args):
     state = None
     try:
         cfg = settings()
+        allow_low_memory = args.get("native_allow_low_memory", False)
+        if type(allow_low_memory) is not bool:
+            raise ValueError("native_allow_low_memory must be a boolean")
+        if allow_low_memory and (
+            cfg["backend"] != "native-local" or "native_config" not in cfg
+        ):
+            raise ValueError("native_allow_low_memory requires native-local with native_config")
         image = Path(args.get("image", ""))
         if (
             not image.is_absolute()
@@ -405,11 +412,13 @@ def _generate(args):
             "log_path": str(folder / "cli.log"),
             "remote_cancellation_supported": False,
             "backend": cfg["backend"],
+            "native_allow_low_memory": allow_low_memory,
         }
         argv = [
             cfg["cli"],
             "image-to-glb",
             *backend_arguments(cfg, folder),
+            *(["--native-allow-low-memory"] if allow_low_memory else []),
             *(["--native-preset", preset] if preset is not None else []),
             "--image",
             str(source),
@@ -427,7 +436,8 @@ def _generate(args):
             str(timeout),
         ]
         (folder / "request.json").write_text(
-            json.dumps({"argv": argv, "env": cli_environment(cfg)})
+            json.dumps({"argv": argv, "env": cli_environment(cfg),
+                        "native_allow_low_memory": allow_low_memory})
         )
         save_state(folder, state)
         child = subprocess.Popen(
@@ -526,7 +536,7 @@ def read_native_config(filename):
     keys = {"venv", "checkout", "models", "runs", "output"}
     if not isinstance(config, dict) or not keys <= config.keys():
         raise ValueError("native_config requires the five runtime paths")
-    if config.keys() - keys - {"schema_version", "device", "minimum_memory_gib", "model"}:
+    if config.keys() - keys - {"schema_version", "device", "minimum_memory_gib", "model", "mps_fallback", "omp_num_threads"}:
         raise ValueError("native_config contains unsupported keys")
     if config.get("model", "trellis2") not in ("trellis2", "pixal3d"):
         raise ValueError("native_config model must be trellis2 or pixal3d")
@@ -535,8 +545,13 @@ def read_native_config(filename):
         or config.get("schema_version", 1) != 1
     ):
         raise ValueError("native_config requires schema_version 1")
-    if config.get("device", "cuda") not in ("cuda", "cpu"):
-        raise ValueError("native_config device must be cuda or cpu")
+    if config.get("device", "cuda") not in ("cuda", "cpu", "mps"):
+        raise ValueError("native_config device must be cuda, cpu or mps")
+    if type(config.get("mps_fallback", True)) is not bool:
+        raise ValueError("native_config mps_fallback must be boolean")
+    threads = config.get("omp_num_threads")
+    if threads is not None and (type(threads) is not int or not 1 <= threads <= 256):
+        raise ValueError("native_config omp_num_threads must be null or an integer from 1 to 256")
     memory = config.get("minimum_memory_gib", 32)
     if type(memory) is not int or not 1 <= memory <= 1024:
         raise ValueError(
@@ -564,12 +579,29 @@ def read_native_config(filename):
     return config
 
 
+def native_config_environment(config, environment):
+    """Mirror SetupConfig.runtime_environment; reject divergent duplicate policy."""
+    effective = {}
+    if config.get("device", "cuda") == "mps":
+        effective["PYTORCH_ENABLE_MPS_FALLBACK"] = "1" if config.get("mps_fallback", True) else "0"
+    threads = config.get("omp_num_threads")
+    if threads is None and config.get("device", "cuda") == "mps":
+        threads = 1
+    if threads is not None:
+        effective["OMP_NUM_THREADS"] = str(threads)
+    for key, value in effective.items():
+        if key in environment and environment[key] != value:
+            raise ValueError(f"environment {key} conflicts with native_config")
+    return {**environment, **effective}
+
+
 def validate_settings(raw):
     from urllib.parse import urlsplit
 
     if not isinstance(raw, dict) or raw.keys() - SETTING_KEYS:
         raise ValueError("Settings must be an object with only documented keys")
     cfg = dict(raw)
+    config = None
     limit = cfg.get("max_timeout_seconds", 1800)
     if type(limit) is not int or not 900 <= limit <= 43200:
         raise ValueError("max_timeout_seconds must be an integer from 900 to 43200")
@@ -660,8 +692,9 @@ def validate_settings(raw):
             raise ValueError("environment values must be single-line strings")
         if key == "PYTORCH_ENABLE_MPS_FALLBACK" and value not in {"0", "1"}:
             raise ValueError("PYTORCH_ENABLE_MPS_FALLBACK must be 0 or 1")
-        if key == "OMP_NUM_THREADS" and (not value.isascii() or not value.isdecimal() or not 1 <= int(value) <= 64):
-            raise ValueError("OMP_NUM_THREADS must be an integer string from 1 to 64")
+        thread_limit = 256 if config is not None else 64
+        if key == "OMP_NUM_THREADS" and (not value.isascii() or not value.isdecimal() or not 1 <= int(value) <= thread_limit):
+            raise ValueError(f"OMP_NUM_THREADS must be an integer string from 1 to {thread_limit}")
         if key in {
             "HF_HOME",
             "HF_HUB_CACHE",
@@ -672,6 +705,8 @@ def validate_settings(raw):
             paths = value.split(":") if key == "LD_LIBRARY_PATH" else [value]
             if any(not p or not Path(p).is_absolute() for p in paths):
                 raise ValueError("cache/library environment paths must be absolute")
+    if config is not None:
+        cfg["environment"] = native_config_environment(config, environment)
     return cfg
 
 
@@ -702,6 +737,8 @@ def backend_arguments(cfg, folder):
         # Snapshot configuration per job; never mutate the operator's config or
         # mix its output/run roots with the plugin's artifact ownership boundary.
         config = read_native_config(cfg["native_config"])
+        # Recheck the exact snapshot in case the operator edited the source.
+        cfg["environment"] = native_config_environment(config, cfg["environment"])
         config.update(runs=str(folder / "native-runs"), output=str(folder / "output"))
         snapshot = folder / "native-setup.json"
         descriptor = os.open(snapshot, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -819,6 +856,11 @@ def register(ctx):
                 "native_preset": {
                     "type": "string", "enum": ["quality-1536-solid768", "fast"],
                     "description": "Override configured native job preset. Quality: 1536 shape, solid768 repair, 4096 atlas, no decimation, smooth exported normals; expensive, explicit opt-in. Fast: legacy 512/none/1024/80000. Conflicting explicit values rejected.",
+                },
+                "native_allow_low_memory": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Explicit user-approved memory/swap risk acknowledgment for this generation only. Requires native-local with native_config; never inherited from settings, presets or setup approval. Does not bypass MPS/device/readiness checks or raise resource limits.",
                 },
                 "no_decimation": {
                     "type": "boolean",

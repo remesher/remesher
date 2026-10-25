@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import shutil
+import stat
 import subprocess
 import tempfile
 import venv
@@ -31,7 +32,9 @@ class SetupConfig(BaseModel):
     models: Path
     runs: Path
     output: Path
-    device: Literal["cpu", "cuda"] = "cuda"
+    device: Literal["cpu", "cuda", "mps"] = "cuda"
+    mps_fallback: bool = Field(default=True, strict=True)
+    omp_num_threads: int | None = Field(default=None, ge=1, le=256, strict=True)
     minimum_memory_gib: int = Field(default=32, ge=1, le=1024)
 
     @field_validator("venv", "checkout", "models", "runs", "output")
@@ -57,6 +60,18 @@ class SetupConfig(BaseModel):
     def python(self):
         return self.venv / "bin" / "python"
 
+    @property
+    def runtime_environment(self):
+        env = {}
+        if self.device == "mps":
+            env["PYTORCH_ENABLE_MPS_FALLBACK"] = "1" if self.mps_fallback else "0"
+        threads = self.omp_num_threads
+        if threads is None and self.device == "mps":
+            threads = 1
+        if threads is not None:
+            env["OMP_NUM_THREADS"] = str(threads)
+        return env
+
     @classmethod
     def at_root(cls, root):
         return cls(
@@ -65,6 +80,9 @@ class SetupConfig(BaseModel):
             models=root / "models",
             runs=root / "runs",
             output=root / "output",
+            device="mps"
+            if platform.system() == "Darwin" and platform.machine() == "arm64"
+            else "cuda",
         )
 
 
@@ -75,7 +93,26 @@ def load_config(path: Path) -> SetupConfig:
 def selected_models(config: SetupConfig) -> list[dict]:
     if config.model == "trellis2":
         return MANIFEST["models"]
-    return [m for m in MANIFEST["models"] if not m["path"].startswith("diffusion_models/")] + MANIFEST["pixal3d"]
+    return [
+        m for m in MANIFEST["models"] if not m["path"].startswith("diffusion_models/")
+    ] + MANIFEST["pixal3d"]
+
+
+def installation_policy(config):
+    if config.device == "mps" or platform.system() == "Darwin":
+        return {
+            "python": "3.12.12",
+            "torch": "2.14.1",
+            "torchvision": "0.29.1",
+            "torch_index": "https://pypi.org/simple",
+        }
+    return {
+        "torch": "2.10.0",
+        "torchvision": "0.25.0",
+        "torchaudio": "2.10.0",
+        "torch_index": "https://download.pytorch.org/whl/"
+        + ("cu130" if config.device == "cuda" else "cpu"),
+    }
 
 
 def plan(config: SetupConfig) -> dict:
@@ -89,26 +126,71 @@ def plan(config: SetupConfig) -> dict:
         "install_requires": "--allow-install (dedicated venv only)",
         "download_requires": "--allow-download (weights only)",
         "installation": {
-            "torch": "2.10.0",
-            "torchvision": "0.25.0",
-            "torchaudio": "2.10.0",
-            "torch_index": "https://download.pytorch.org/whl/"
-            + ("cu130" if config.device == "cuda" else "cpu"),
+            **installation_policy(config),
             "requirements_sha256": REQUIREMENTS_SHA256,
             "package_download_bytes": None,
             "warning": "Package wheel downloads are additional to model bytes; transitive dependencies are not hash-locked",
             "global_mutation": False,
         },
         "generation_validated": False,
+        "runtime_environment": config.runtime_environment,
+        "memory_warning": "Low-memory MPS execution can require heavy system-volume swap; 8 GiB is not admitted without explicit --allow-low-memory. External weights do not relocate swap.",
     }
 
 
-def memory_status(proc: Path = Path("/proc")) -> dict:
+def macos_memory_status() -> dict:
+    """Conservative free + inactive + speculative estimate, not swap capacity."""
+    import re
+
+    status = {
+        "known": False,
+        "source": "macos-vm-stat",
+        "cgroup_detected": False,
+        "controls": [],
+        "effective_limit_bytes": None,
+        "available_bytes": None,
+    }
+    try:
+
+        def read(argv):
+            return subprocess.run(
+                argv, capture_output=True, text=True, check=True, timeout=10
+            ).stdout
+
+        total = int(read(["/usr/sbin/sysctl", "-n", "hw.memsize"]).strip())
+        stats = read(["/usr/bin/vm_stat"])
+        match = re.search(r"page size of (\d+) bytes", stats)
+        if match is None:
+            raise ValueError("Missing page size")
+        page_size = int(match[1])
+        pages = {
+            key: int(value)
+            for key, value in re.findall(
+                r"^Pages (free|inactive|speculative):\s+(\d+)\.", stats, re.MULTILINE
+            )
+        }
+        available = (
+            sum(pages[key] for key in ("free", "inactive", "speculative")) * page_size
+        )
+        if total <= 0 or page_size <= 0 or available > total:
+            raise ValueError("Invalid memory counters")
+        status.update(
+            known=True, effective_limit_bytes=total, available_bytes=available
+        )
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        pass
+    return status
+
+
+def memory_status(proc: Path | None = None) -> dict:
     """Linux cgroup v1/v2 ancestors, not just misleading host RAM totals.
 
     No scope creation, limit changes, or attempts to leave a caller's cgroup.
     Unknown/unreadable control files fail closed at the admission boundary.
     """
+    if proc is None and platform.system() == "Darwin":
+        return macos_memory_status()
+    proc = Path("/proc") if proc is None else proc
     limits, available, controls = [], [], []
     known = False
     detected = False
@@ -186,16 +268,17 @@ def memory_status(proc: Path = Path("/proc")) -> dict:
 
 
 def require_memory(config: SetupConfig, status: dict, *, allow_low_memory=False):
-    minimum = config.minimum_memory_gib * 1024**3
+    minimum_gib = max(config.minimum_memory_gib, 32 if config.device == "mps" else 1)
+    minimum = minimum_gib * 1024**3
     if not allow_low_memory and (
         not status["known"]
         or (status["available_bytes"] or 0) < minimum
         or (status["effective_limit_bytes"] or 0) < minimum
     ):
         raise ValueError(
-            f"Insufficient or unknown effective memory; policy requires {config.minimum_memory_gib} GiB. "
-            "Run in an explicitly approved sufficiently sized bounded scope/container, then re-run check. "
-            "No cgroup limits are changed. --allow-low-memory acknowledges OOM risk for this invocation only; "
+            f"Insufficient or unknown effective memory; policy requires {minimum_gib} GiB. "
+            "Use a sufficiently sized host (or approved bounded Linux scope/container), then re-run check. "
+            "No resource limits are changed. --allow-low-memory acknowledges OOM and heavy system-disk swap risk for this invocation only; "
             "it does not raise limits or escape the scope."
         )
 
@@ -245,9 +328,17 @@ PROBE = """import json,sys,platform
 import torch, scipy, safetensors, aiohttp, yaml, comfy_kitchen
 from importlib.metadata import version
 cuda = torch.cuda.is_available()
+mps = torch.backends.mps.is_available()
+mps_tensor_ok = False
+if sys.argv[1] == "mps" and mps:
+    x = torch.ones((2, 2), device="mps")
+    y = x @ x
+    torch.mps.synchronize()
+    mps_tensor_ok = y.device.type == "mps" and y.cpu().tolist() == [[2.0, 2.0], [2.0, 2.0]]
 print(json.dumps({"ok":True,"prefix":sys.prefix,"base_prefix":sys.base_prefix,
     "python":platform.python_version(),"machine":platform.machine(),"platform":sys.platform,
     "torch":torch.__version__,"cuda_available":cuda,"cuda_version":torch.version.cuda,
+    "mps_available":mps,"mps_tensor_ok":mps_tensor_ok,
     "device":torch.cuda.get_device_name(0) if cuda else None,
     "capability":list(torch.cuda.get_device_capability(0)) if cuda else None,
     "device_memory_bytes":torch.cuda.get_device_properties(0).total_memory if cuda else None,
@@ -260,7 +351,8 @@ def probe(config):
         return {"ok": False, "error": "Missing dedicated Python venv"}
     try:
         result = subprocess.run(
-            [str(config.python), "-I", "-c", PROBE],
+            [str(config.python), "-I", "-c", PROBE, config.device],
+            env={**os.environ, **config.runtime_environment},
             capture_output=True,
             text=True,
             timeout=45,
@@ -277,12 +369,20 @@ def probe(config):
                 ok=False,
                 error="CUDA unavailable; select device=cpu only as an unvalidated experimental path or repair CUDA",
             )
+        if config.device == "mps" and not (
+            data.get("mps_available") and data.get("mps_tensor_ok")
+        ):
+            data.update(
+                ok=False,
+                error="MPS unavailable or real MPS tensor probe failed; no CPU fallback accepted",
+            )
+        data["runtime_environment"] = config.runtime_environment
         data["generation_validated"] = False
         return data
     except (OSError, ValueError, KeyError, subprocess.SubprocessError):
         return {
             "ok": False,
-            "error": "Venv capability probe failed; inspect interpreter/dependencies/CUDA (45s deadline)",
+            "error": "Venv capability probe failed; inspect interpreter/dependencies/CUDA/MPS tensor operation (45s deadline)",
         }
 
 
@@ -346,6 +446,7 @@ def check(config, *, allow_low_memory=False):
 def _run_install(argv, log, *, cwd=None):
     """Run only constructed argv; no user shell or arbitrary URL argument."""
     import signal
+    import time
 
     env = {
         k: v
@@ -362,7 +463,9 @@ def _run_install(argv, log, *, cwd=None):
     import threading
 
     if threading.current_thread() is not threading.main_thread():
-        raise ValueError("native installer ownership requires the main thread for signal cleanup")
+        raise ValueError(
+            "native installer ownership requires the main thread for signal cleanup"
+        )
     child = None
     terminated = False
 
@@ -389,7 +492,23 @@ def _run_install(argv, log, *, cwd=None):
                 )
                 if terminated:
                     raise SystemExit(128 + signal.SIGTERM)
-                code = child.wait(timeout=1800)
+                if platform.system() == "Darwin":
+                    deadline = time.monotonic() + 1800
+                    while True:
+                        if shutil.disk_usage(log.parent).free < 5 * 1024**3:
+                            raise ValueError(
+                                "macOS installer stopped: preserve 5 GiB runtime-volume disk reserve"
+                            )
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise subprocess.TimeoutExpired(argv, 1800)
+                        try:
+                            code = child.wait(timeout=min(1, remaining))
+                            break
+                        except subprocess.TimeoutExpired:
+                            continue
+                else:
+                    code = child.wait(timeout=1800)
                 if code:
                     raise RuntimeError(f"Setup command failed ({code}); inspect {log}")
             finally:
@@ -417,10 +536,31 @@ def _run_install(argv, log, *, cwd=None):
 def install(config):
     from .native_download import file_lock, no_symlinks
 
-    if os.name != "posix" or platform.system() != "Linux":
+    macos = platform.system() == "Darwin"
+    if os.name != "posix" or platform.system() not in {"Linux", "Darwin"}:
         raise ValueError(
-            "Automated installation currently supports Linux POSIX only; reuse a prepared venv elsewhere"
+            "Automated installation supports Linux and Apple Silicon macOS only"
         )
+    if macos and (platform.machine() != "arm64" or config.device == "cuda"):
+        raise ValueError(
+            "macOS installation requires Apple Silicon arm64 and device=mps or cpu"
+        )
+    if not macos and config.device == "mps":
+        raise ValueError("MPS installation requires Apple Silicon macOS")
+    policy = installation_policy(config)
+    if macos and platform.python_version() != policy["python"]:
+        raise ValueError(
+            "macOS installation requires Python 3.12.12; run uv run --python 3.12.12 comfy-prompt-cli native-setup apply with the same arguments"
+        )
+    if macos:
+        for destination in (config.venv, config.checkout):
+            existing = destination
+            while not existing.exists():
+                existing = existing.parent
+            if shutil.disk_usage(existing).free < 13 * 1024**3:
+                raise ValueError(
+                    "macOS installation requires 8 GiB package/checkout headroom plus 5 GiB disk reserve"
+                )
     marker = config.venv / ".remesher-native-managed.json"
     no_symlinks(config.venv)
     no_symlinks(config.checkout)
@@ -428,21 +568,28 @@ def install(config):
         raise ValueError(
             "Refusing to modify an unmanaged venv; choose a new venv path or reuse it without --allow-install"
         )
-    with file_lock(config.venv.with_name(config.venv.name + ".setup.lock")):
+    with (
+        file_lock(config.venv.with_name(config.venv.name + ".setup.lock")),
+        file_lock(config.checkout.with_name(config.checkout.name + ".setup.lock")),
+    ):
         expected = {
             "schema_version": 1,
             "device": config.device,
             "comfy_revision": MANIFEST["comfy_revision"],
         }
+        if macos:
+            expected["installation"] = policy
         if config.venv.exists():
             no_symlinks(marker)
             if json.loads(marker.read_text()) != expected:
                 raise ValueError("Managed venv profile changed; choose a new venv path")
         else:
             # An interrupted venv creation is deliberately not adopted automatically.
-            venv.EnvBuilder(with_pip=True, system_site_packages=False).create(
-                config.venv
-            )
+            venv.EnvBuilder(
+                with_pip=True,
+                system_site_packages=False,
+                **({"symlinks": True} if macos else {}),
+            ).create(config.venv)
             marker.write_text(json.dumps(expected))
         log = config.venv / "native-setup.log"
         no_symlinks(log)
@@ -514,23 +661,23 @@ def install(config):
             "install",
             "--only-binary=:all:",
         ]
-        flavor = "cu130" if config.device == "cuda" else "cpu"
+        packages = [
+            f"{name}=={policy[name]}"
+            for name in ("torch", "torchvision", "torchaudio")
+            if name in policy
+        ]
         _run_install(
             pip
             + [
                 "--index-url",
-                f"https://download.pytorch.org/whl/{flavor}",
-                "torch==2.10.0",
-                "torchvision==0.25.0",
-                "torchaudio==2.10.0",
-            ],
+                policy["torch_index"],
+            ]
+            + packages,
             log,
         )
         constraint = config.venv / "native-constraints.txt"
         no_symlinks(constraint)
-        constraint.write_text(
-            "torch==2.10.0\ntorchvision==0.25.0\ntorchaudio==2.10.0\n"
-        )
+        constraint.write_text("\n".join(packages) + "\n")
         _run_install(
             pip
             + [
@@ -588,13 +735,30 @@ def apply(
     after["operation"] = "apply"
     if after["ready"]:
         no_symlinks(config_path)
+        content = (config.model_dump_json(indent=2) + "\n").encode("utf-8")
+        try:
+            existing = config_path.lstat()
+        except FileNotFoundError:
+            existing = None
+        # Only reuse files with the same private ownership/mode and independent
+        # inode that atomic publication would provide. Never bypass symlink checks.
+        if (
+            existing is not None
+            and stat.S_ISREG(existing.st_mode)
+            and stat.S_IMODE(existing.st_mode) == 0o600
+            and existing.st_uid == os.geteuid()
+            and existing.st_nlink == 1
+            and config_path.read_bytes() == content
+        ):
+            after["config_path"] = str(config_path)
+            return after
         config_path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
-            mode="w", dir=config_path.parent, prefix=".native-setup-", delete=False
+            mode="wb", dir=config_path.parent, prefix=".native-setup-", delete=False
         ) as output:
             temp_path = Path(output.name)
             try:
-                output.write(config.model_dump_json(indent=2) + "\n")
+                output.write(content)
                 output.flush()
                 os.fsync(output.fileno())
                 os.replace(temp_path, config_path)
@@ -613,7 +777,21 @@ def main(argv=None):
 
     parser = Parser(description=__doc__)
     parser.add_argument("operation", choices=["plan", "check", "apply"])
-    parser.add_argument("--model", choices=["trellis2", "pixal3d"], help="Preset for --root; saved configs own model selection")
+    parser.add_argument(
+        "--model",
+        choices=["trellis2", "pixal3d"],
+        help="Preset for --root; saved configs own model selection",
+    )
+    parser.add_argument(
+        "--models",
+        type=Path,
+        help="With --root only: separate model storage, including an external volume",
+    )
+    parser.add_argument(
+        "--device",
+        choices=["cuda", "cpu", "mps"],
+        help="With --root only: explicit device; Apple Silicon defaults to mps",
+    )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument(
         "--root",
@@ -636,7 +814,7 @@ def main(argv=None):
     parser.add_argument(
         "--allow-low-memory",
         action="store_true",
-        help="Acknowledge OOM risk; never changes or escapes cgroup limits",
+        help="Acknowledge OOM/heavy system-swap risk for this invocation; never changes resource limits",
     )
     try:
         args = parser.parse_args(argv)
@@ -645,9 +823,22 @@ def main(argv=None):
         config = (
             load_config(args.config) if args.config else SetupConfig.at_root(args.root)
         )
+        overrides = {
+            key: value
+            for key, value in {"models": args.models, "device": args.device}.items()
+            if value is not None
+        }
+        if overrides:
+            if args.config:
+                raise ValueError(
+                    "--models and --device are only accepted with --root; saved configs own these settings"
+                )
+            config = SetupConfig.model_validate({**config.model_dump(), **overrides})
         if args.model is not None:
             if args.config:
-                raise ValueError("--model is only accepted with --root; edit a separate config to change preset")
+                raise ValueError(
+                    "--model is only accepted with --root; edit a separate config to change preset"
+                )
             config.model = args.model
         if args.operation == "plan":
             report = plan(config)

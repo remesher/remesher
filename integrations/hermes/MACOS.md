@@ -1,16 +1,49 @@
-# macOS / MPS: prepared-runtime route
+# macOS / MPS: provisioning and prepared-runtime routes
 
 Plugin 0.3.0 supports the Linux and macOS POSIX adapter lifecycle. Windows is
-not supported. macOS support here is **image-to-GLB with a separately prepared
-runtime**, not automatic installation, rigging, or universal model certification.
+not supported. macOS support here is **image-to-GLB with an explicitly provisioned
+or separately prepared runtime**, not implicit installation, rigging, or universal
+model certification.
 
 ## Configure explicitly
 
 Prepare and verify a dedicated ComfyUI Python environment and checkout first.
-Do not use the Linux CUDA installer on macOS. `native_config` readiness still
-uses the Linux memory policy and CPU/CUDA schema; use the explicit runtime fields
-below on macOS, not a forged `ready` receipt or a low-memory-policy bypass.
+The CLI now has an Apple Silicon provisioning policy: see
+[native setup](../../docs/native-setup.md#apple-silicon-macos-provisioning) for
+exact plan/apply/check commands, Python/torch pins, internal-runtime/external-model
+layout, memory admission and separate approvals. `native_config` accepts MPS,
+`mps_fallback` and `omp_num_threads`, preserving those settings in its private
+job snapshot. Config-based CLI launches apply them to the probe and owned child.
+The explicit prepared-runtime fields below remain available and do not imply
+provisioning verification. Never forge a `ready` receipt.
 No dependencies or model weights are installed by plugin registration or health.
+
+On machines below the MPS memory floor, setup approval does not carry into
+generation. The public CLI requires `--native-allow-low-memory` on each generation
+invocation. With explicit user approval of this job's memory/swap risk, call
+`remesher_generate` with `native_allow_low_memory: true`. This strict boolean
+defaults to false and is accepted as true only for `native-local` with
+`native_config`. It forwards `--native-allow-low-memory` on that invocation only;
+settings JSON, native setup JSON, presets and environment variables cannot grant
+approval. Both `request.json` and the persisted job receipt record the boolean.
+An omitted/false value never adds the flag, including after an approved job.
+Do not lower the config's threshold or automatically retry with approval. The
+flag does not bypass device/tensor/model checks, install anything, or raise limits.
+Provisioning parity is separate from full plugin-owned inference acceptance.
+
+For the config route, keep runtime policy in the typed native setup fields.
+MPS defaults are `mps_fallback: true` and `omp_num_threads: null` (effective 1).
+Duplicate plugin `environment` values must exactly match effective typed policy,
+including defaults; conflicts fail closed, not silently override either side.
+Effective values are included in the request environment and checked again when
+snapshotting. Config mode supports typed OMP values 1–256 (matching duplicate
+environment strings); the explicit prepared-runtime route retains 1–64.
+
+Example per-job request after authorizing the risk (with config-mode settings):
+
+```json
+{"image": "/absolute/prepared.png", "native_allow_low_memory": true}
+```
 
 ```json
 {
