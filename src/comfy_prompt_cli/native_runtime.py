@@ -1,4 +1,4 @@
-"""Opt-in Linux/POSIX ComfyUI child ownership; never install or adopt a server."""
+"""Opt-in Linux/macOS ComfyUI child ownership; never install or adopt a server."""
 
 from __future__ import annotations
 
@@ -37,9 +37,9 @@ class LocalRuntime:
             raise ValueError("native Python must be an absolute existing executable")
         if not checkout.is_absolute() or not (checkout / "main.py").is_file():
             raise ValueError("native checkout must be absolute and contain main.py")
-        if device not in {"cpu", "cuda"}:
+        if device not in {"cpu", "cuda", "mps"}:
             raise ValueError(
-                "native device must be cpu or cuda (not a hardware certification)"
+                "native device must be cpu, cuda or mps (not a hardware certification)"
             )
         if not 0 <= port <= 65535 or startup_timeout <= 0:
             raise ValueError("invalid native port or startup timeout")
@@ -104,7 +104,12 @@ class LocalRuntime:
                 )
             )
             self.argv += ["--extra-model-paths-config", str(model_config)]
-        self.argv += ["--cpu"] if self.device == "cpu" else ["--cuda-device", "0"]
+        # Pinned ComfyUI autodetects MPS; it has no --mps flag.
+        # Confirm the effective device below instead of silently accepting CPU.
+        if self.device == "cpu":
+            self.argv += ["--cpu"]
+        elif self.device == "cuda":
+            self.argv += ["--cuda-device", "0"]
         self.base_url = f"http://127.0.0.1:{self.port}"
         try:
             self.previous_sigterm = signal.getsignal(signal.SIGTERM)
@@ -135,11 +140,17 @@ class LocalRuntime:
                     try:
                         response = client.get("/system_stats")
                         response.raise_for_status()
+                        stats = response.json()
                         if (
-                            response.json().get("system", {}).get("argv")
+                            stats.get("system", {}).get("argv")
                             == self.argv[1:]
                             and self.process.poll() is None
                         ):
+                            devices = stats.get("devices", [])
+                            if self.device == "mps" and (
+                                not devices or devices[0].get("type") != "mps"
+                            ):
+                                raise RuntimeError("MPS requested but owned ComfyUI did not report MPS")
                             return self
                     except (httpx.HTTPError, ValueError, AttributeError):
                         pass

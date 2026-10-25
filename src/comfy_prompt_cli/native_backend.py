@@ -392,6 +392,8 @@ def generate(
     validate=True,
     **options,
 ):
+    if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= 43200:
+        raise ValueError("native timeout must be finite, positive and at most 43200 seconds")
     graph = build_prompt(image.name, **options)
     # Model/schema failures are read-only: don't upload or queue first.
     if validate:

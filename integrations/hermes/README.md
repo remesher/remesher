@@ -10,6 +10,9 @@ import, registration, doctor, validation, health, or configuration inspection.
 Combined native-config real GPU evidence and remaining review/quality gates:
 [TRELLIS wrestler acceptance](https://github.com/remesher/remesher/blob/0b2e876e7526d7b9d5bc60607ecc2bb832b8d8b7/docs/trellis-plugin-acceptance.md).
 
+macOS/MPS uses a separately prepared runtime, not the Linux setup installer.
+See [macOS configuration, long jobs and evidence limits](MACOS.md).
+
 ## Backend and configuration contract
 
 Requires POSIX, Python 3.11+, a separately installed CLI, and trusted executable,
@@ -26,7 +29,7 @@ arguments**. Obtain authorization before configuration writes or generation.
 All file paths must be existing absolute paths. `cli` and `native_python` must
 be executable; `native_checkout` must contain `main.py`. Interpreter symlinks
 are **not resolved**, preserving venv identity. Defaults: native server
-`http://127.0.0.1:8188`, device `cuda` (`cpu` also accepted), model `trellis2`
+`http://127.0.0.1:8188`, device `cuda` (`cpu` and explicit-runtime `mps` also accepted), model `trellis2`
 (`pixal3d` also accepted). Native modes need neither legacy config nor workflow.
 The generated native graph is owned by the CLI, not a plugin-supplied workflow.
 
@@ -68,7 +71,8 @@ export REMESHER_WORKFLOW=/absolute/remesher/examples/img_to_trellis2.json
 Legacy CLI config example: `{"server_url":"http://127.0.0.1:8188/"}`.
 The only explicit `environment` keys are `CUDA_VISIBLE_DEVICES`, `HF_HOME`,
 `HF_HUB_CACHE`, `TORCH_HOME`, `XDG_CACHE_HOME`, `LD_LIBRARY_PATH` and
-`PYTORCH_CUDA_ALLOC_CONF`. Cache/library paths must be absolute; library lists
+`PYTORCH_CUDA_ALLOC_CONF`, `PYTORCH_ENABLE_MPS_FALLBACK` (`0`/`1`) and
+`OMP_NUM_THREADS` (integer strings 1–64). Cache/library paths must be absolute; library lists
 are colon-separated with no empty entries. These overrides are snapshotted in
 the private request and forwarded to the CLI/native child. Ambient versions of
 these variables are **not** forwarded. HOME, PATH, locale, TMPDIR and TLS
@@ -95,7 +99,7 @@ restart that session after authorized environment changes. Neither script nor
 plugin edits `.env`, `config.yaml`, an installed plugin, or another profile.
 For updates, inspect and publish a new file rather than overwriting a live one.
 
-### Verified native setup configuration (recommended)
+### Verified native setup configuration (Linux recommended)
 
 The integrated CLI implements [native-setup](https://github.com/remesher/remesher/blob/0b2e876e7526d7b9d5bc60607ecc2bb832b8d8b7/docs/native-setup.md).
 Use its actual JSON contract; do not use legacy Comfy3D downloaders:
@@ -190,7 +194,7 @@ The CLI owns its port/startup defaults; no unsupported future options are used.
 | Tool | Result |
 |---|---|
 | `remesher_health` | `healthy/unhealthy` connectivity for server modes; `configured` path validation only for native-local, which never starts a server; may return `timed_out/unavailable` |
-| `remesher_generate` | Inputs: absolute local PNG/JPEG/WebP `image` (max 20 MiB), optional `timeout_seconds` 1–1800 (900 default), `target_face_num` 1000–200000 (80000 default), `no_decimation` boolean (false default; native only). With `no_decimation: true`, no face-count argument is sent and generated geometry goes directly to UV/PBR export. Returns `queued` + job_id or `busy`/rejection |
+| `remesher_generate` | Inputs: absolute local PNG/JPEG/WebP `image` (max 20 MiB), optional `timeout_seconds` 1–1800 (900 default); explicit operator `max_timeout_seconds` permits up to 43200, `target_face_num` 1000–200000 (80000 default), `no_decimation` boolean (false default; native only). With `no_decimation: true`, no face-count argument is sent and generated geometry goes directly to UV/PBR export. Returns `queued` + job_id or `busy`/rejection |
 | `remesher_job` | Persistent status by 32-character lowercase hex job_id |
 | `remesher_assets` | Successful GLB paths, byte sizes, SHA-256 and MIME types |
 
@@ -215,9 +219,11 @@ output, while plugin assets advertise the final textured GLB only. See
 - An independent stdlib supervisor survives normal Hermes exit. It uses argv
   lists, a private working directory, a capped 1 MiB CLI log and an absolute
   execution/inspection budget. Native-local gets up to **12 extra seconds of
-  cleanup grace**: SIGTERM lets the CLI reap its separately-sessioned server,
+  cleanup grace**, plus up to 5 seconds final reaping: SIGTERM lets the CLI reap its separately-sessioned server,
   then the supervisor kills the CLI group. A dead/unresponsive CLI may leave its
   owned server behind: cleanup is not guaranteed after SIGKILL/host crash.
+  If final CLI reaping times out, `cleanup_pending: true` blocks new jobs until
+  operator reconciliation. See MACOS.md for the bounded long-job contract.
 - Native-local server logs and run directories live under the private job's
   `native-runs`; their size is not capped by the plugin. Operator storage quotas
   are recommended. Do not update code or remove job data while a worker is active.

@@ -198,8 +198,8 @@ import json
 config = json.loads(pathlib.Path(sys.argv[sys.argv.index("--native-config") + 1]).read_text())
 assert "--out-dir" not in sys.argv and "--native-python" not in sys.argv
 assert "--native-runs" not in sys.argv and "--native-device" not in sys.argv
-assert pathlib.Path(config["runs"]).parent == pathlib.Path.cwd()
-assert pathlib.Path(config["output"]) == pathlib.Path.cwd() / "output"
+assert pathlib.Path(config["runs"]).parent.resolve() == pathlib.Path.cwd().resolve()
+assert pathlib.Path(config["output"]).resolve() == (pathlib.Path.cwd() / "output").resolve()
 (pathlib.Path(config["output"]) / "mesh.glb").write_bytes(struct.pack("<4sII", b"glTF", 2, 12))
 """)
         original = {

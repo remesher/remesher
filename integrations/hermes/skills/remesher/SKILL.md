@@ -28,7 +28,10 @@ description: Configure and inspect Remesher setup, generate GLBs from local imag
    behavior, not the tested quality recipe. Request preset overrides settings
    preset; explicit scalar controls must agree or the request is rejected.
    Do not mix `native_config` with explicit runtime paths/device/server. For manual native-local, set
-   `native_device` to `cuda` or `cpu`. Never insert shell strings or extra
+   `native_device` to `cuda`, `cpu` or `mps`. On macOS use the prepared-runtime
+   route in `MACOS.md`, optional explicit `native_models`, not Linux native-config
+   readiness or the CUDA installer. MPS must be reported by the owned server.
+   Never insert shell strings or extra
    arguments. Device/cache variables must be explicit in `environment`; ambient
    CUDA/HF/Torch variables are scrubbed along with Python/uv activation and tokens.
 4. Run `python <plugin>/scripts/configure.py --input <candidate.json>` for
@@ -62,7 +65,11 @@ description: Configure and inspect Remesher setup, generate GLBs from local imag
    and pad enough to retain hands/feet. Do not mistake gray clothing for background.
    Call `remesher_generate` once with absolute PNG/JPEG/WebP `image` (max 20 MiB).
    With configured quality, do not pass a face target or old scalar defaults.
-   Optional `timeout_seconds`: 1–1800, default 900. Save the returned job_id.
+   Optional `timeout_seconds`: 1–1800, default 900. For authorized long jobs,
+   the operator may set `max_timeout_seconds` up to 43200, then explicitly request
+   that budget; changing the ceiling does not change the 900-second default.
+   Plan for startup, inference, transfer and asset inspection together.
+   Save the returned job_id.
    Backend and paths are setup settings,
    not per-call model-controlled tool arguments.
 3. Poll `remesher_job` every few seconds. States are `queued`, `running`,
@@ -74,9 +81,10 @@ description: Configure and inspect Remesher setup, generate GLBs from local imag
    the original receipt and investigate rather than automatically regenerate.
    Verify the hash again when consuming an artifact.
 
-Native-local deadlines allow up to 12 seconds of additional cleanup grace for
+Native-local deadlines allow up to 12 seconds plus 5 seconds final reaping for
 the CLI to reap its owned server. SIGKILL/host crash can still leave a server
-behind. Existing native/comfy3d server jobs are **not remotely cancelled** by
+behind. `cleanup_pending: true` blocks new jobs until operator reconciliation;
+never clear it without checking the prior owned processes. Existing native/comfy3d server jobs are **not remotely cancelled** by
 local timeout. Inspect queue/history before retrying, and never globally interrupt
 another user's jobs. Supervisors may continue after Hermes exits; only queued
 receipts are consumed, never running/terminal receipts. Artifact inspection shares
