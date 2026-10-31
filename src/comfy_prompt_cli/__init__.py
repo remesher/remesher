@@ -1245,11 +1245,66 @@ def image_to_glb(
         typer.echo(f"Downloaded {path}")
 
 
+def _validate_rigging_backend(backend: str) -> None:
+    if backend not in {"mia", "skintokens"}:
+        raise typer.BadParameter("--rigging-backend must be one of: mia, skintokens")
+
+
+def _skintokens_output_name(name: str) -> str:
+    if not name.strip():
+        raise typer.BadParameter("SkinTokens output name must not be empty.")
+    path = Path(name)
+    if path.is_absolute() or ".." in path.parts or "\\" in name or ":" in name:
+        raise typer.BadParameter("SkinTokens output name must be a relative path without traversal.")
+    return name if name.lower().endswith(".glb") else f"{name}.glb"
+
+
+def _skintokens_prompt(workflow_file: Path | None, mesh: str | None, glb_name: str | None,
+                       *, use_skeleton: bool, use_transfer: bool, use_postprocess: bool,
+                       num_beams: int) -> dict[str, Any]:
+    if workflow_file is None:
+        prompt = {"1": {"class_type": "SkinTokensRigGLB", "inputs": {}}}
+    else:
+        prompt = _load_prompt_from_file(workflow_file)
+    node = _find_node_by_class(prompt, "SkinTokensRigGLB")
+    if node is None:
+        raise typer.BadParameter("SkinTokens workflow requires a SkinTokensRigGLB node.")
+    inputs = node[1].setdefault("inputs", {})
+    if not isinstance(inputs, dict):
+        raise typer.BadParameter("SkinTokensRigGLB inputs must be an object.")
+    if "seed" in inputs:
+        raise typer.BadParameter("SkinTokensRigGLB does not support seed; remove it from the workflow inputs.")
+    mesh = mesh if mesh is not None else inputs.get("glb_path")
+    if not isinstance(mesh, str) or not mesh.strip():
+        raise typer.BadParameter("SkinTokens requires --mesh or a workflow glb_path STRING.")
+    name = _skintokens_output_name(glb_name if glb_name is not None else Path(mesh).stem)
+    inputs.update(glb_path=mesh, output_name=name, use_skeleton=use_skeleton,
+                  use_transfer=use_transfer, use_postprocess=use_postprocess,
+                  num_beams=num_beams)
+    return prompt
+
+
+def _download_skintokens(**kwargs: Any) -> None:
+    downloads = _submit_wait_and_download(extensions=GLB_EXTENSIONS, **kwargs)
+    if not downloads:
+        raise typer.BadParameter(
+            "SkinTokens produced no downloadable GLB. SkinTokensRigGLB must publish ui.files "
+            "with filename, subfolder and type=output; a STRING path alone is insufficient."
+        )
+    for path in downloads:
+        typer.echo(f"Downloaded {path}")
+
+
 @app.command("rig-glb")
 def rig_glb(
-    workflow_file: Path = typer.Option(
-        DEFAULT_RIG_GLB_WORKFLOW,
-        help="Path to rig_glb_mia API prompt JSON",
+    rigging_backend: str = typer.Option("mia", help="Rigging backend: mia (default) or skintokens (experimental)."),
+    use_skeleton: bool = typer.Option(False, help="SkinTokens: use the input skeleton."),
+    use_transfer: bool = typer.Option(True, help="SkinTokens: transfer skin weights to the input mesh."),
+    use_postprocess: bool = typer.Option(False, help="SkinTokens: enable model postprocessing."),
+    num_beams: int = typer.Option(10, min=1, max=20, help="SkinTokens beam count."),
+    workflow_file: Path | None = typer.Option(
+        None,
+        help="Rig API prompt JSON; defaults to the selected backend's workflow.",
     ),
     config: Path = typer.Option(CONFIG_PATH, help="Path to config.json"),
     client_id: str | None = typer.Option(None, help="Optional ComfyUI client_id"),
@@ -1320,11 +1375,28 @@ def rig_glb(
         Path("downloads"), help="Directory to write downloaded files"
     ),
 ) -> None:
-    """Auto-rig a GLB mesh using the MIA workflow and download the resulting GLB."""
+    """Auto-rig a GLB using MIA (default) or experimental SkinTokens."""
+    _validate_rigging_backend(rigging_backend)
     cfg = _load_config(config)
     base = str(cfg.server_url).rstrip("/")
+    if rigging_backend == "skintokens":
+        prompt = _skintokens_prompt(
+            workflow_file, mesh, glb_name, use_skeleton=use_skeleton,
+            use_transfer=use_transfer, use_postprocess=use_postprocess,
+            num_beams=num_beams,
+        )
+        mesh_node = _find_node_by_class(prompt, "SkinTokensRigGLB")
+        assert mesh_node is not None  # Validated by _skintokens_prompt.
+        node = mesh_node[1]
+        mesh_path = Path(node["inputs"]["glb_path"])
+        if mesh_path.is_file():
+            node["inputs"]["glb_path"] = _upload_input_asset(base, mesh_path, label="Mesh")
+        _download_skintokens(base=base, prompt=prompt, client_id=client_id,
+                             poll_interval=poll_interval, timeout=timeout,
+                             out_dir=out_dir, verbose=verbose)
+        return
 
-    prompt = _load_prompt_from_file(workflow_file)
+    prompt = _load_prompt_from_file(workflow_file or DEFAULT_RIG_GLB_WORKFLOW)
     changes: list[str] = []
 
     if mesh is not None:
@@ -2087,6 +2159,11 @@ def text_to_glb(
 
 @app.command("text-to-rigged-glb")
 def text_to_rigged_glb(
+    rigging_backend: str = typer.Option("mia", help="Rigging backend: mia (default) or skintokens (experimental)."),
+    use_skeleton: bool = typer.Option(False, help="SkinTokens: use the input skeleton."),
+    use_transfer: bool = typer.Option(True, help="SkinTokens: transfer skin weights to the input mesh."),
+    use_postprocess: bool = typer.Option(False, help="SkinTokens: enable model postprocessing."),
+    num_beams: int = typer.Option(10, min=1, max=20, help="SkinTokens beam count."),
     prompt_text: str = typer.Option(
         ..., "--prompt", help="Text prompt to generate the source image"
     ),
@@ -2098,9 +2175,9 @@ def text_to_rigged_glb(
         DEFAULT_IMAGE_TO_GLB_WORKFLOW,
         help="Path to image-to-glb API prompt JSON",
     ),
-    rig_workflow_file: Path = typer.Option(
-        DEFAULT_RIG_GLB_WORKFLOW,
-        help="Path to rig_glb_mia API prompt JSON",
+    rig_workflow_file: Path | None = typer.Option(
+        None,
+        help="Rig API prompt JSON; defaults to the selected backend's workflow.",
     ),
     config: Path = typer.Option(CONFIG_PATH, help="Path to config.json"),
     client_id: str | None = typer.Option(None, help="Optional ComfyUI client_id"),
@@ -2179,6 +2256,15 @@ def text_to_rigged_glb(
     ),
 ) -> None:
     """Generate and rig end-to-end: text-to-image, image-to-glb, then rig-glb."""
+    _validate_rigging_backend(rigging_backend)
+    # Validate the rig workflow before spending time on image/mesh generation.
+    skintokens_prompt = None
+    if rigging_backend == "skintokens":
+        skintokens_prompt = _skintokens_prompt(
+            rig_workflow_file, "pending.glb", glb_name,
+            use_skeleton=use_skeleton, use_transfer=use_transfer,
+            use_postprocess=use_postprocess, num_beams=num_beams,
+        )
     cfg = _load_config(config)
     base = str(cfg.server_url).rstrip("/")
 
@@ -2310,7 +2396,16 @@ def text_to_rigged_glb(
     typer.echo(f"Uploaded GLB for rig stage: {uploaded_glb_ref}")
 
     typer.echo("Stage 3/3: rig-glb")
-    rig_prompt = _load_prompt_from_file(rig_workflow_file)
+    if skintokens_prompt is not None:
+        node = _find_node_by_class(skintokens_prompt, "SkinTokensRigGLB")
+        assert node is not None  # Validated before stage 1.
+        node[1]["inputs"].update(glb_path=uploaded_glb_ref,
+                                  output_name=_skintokens_output_name(glb_name or downloaded_glb.stem))
+        _download_skintokens(base=base, prompt=skintokens_prompt, client_id=client_id,
+                             poll_interval=poll_interval, timeout=timeout,
+                             out_dir=rig_out_dir, verbose=verbose)
+        return
+    rig_prompt = _load_prompt_from_file(rig_workflow_file or DEFAULT_RIG_GLB_WORKFLOW)
     rig_changes: list[str] = []
 
     rig_mesh_node_id = _set_input_on_first_node_by_class(
