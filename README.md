@@ -64,6 +64,13 @@ Historical native generation passed on Linux ARM64 NVIDIA Spark, with provisiona
 visual quality; other hardware and production manifold output are not certified.
 Comfy3D remains the default; legacy workflows, rigging and animation paths are unchanged.
 
+## Experimental SkinTokens rigging
+
+`rig-glb` and `text-to-rigged-glb` accept `--rigging-backend skintokens`.
+MIA remains the default; SkinTokens keeps its own weights and does not imply
+Mixamo retarget compatibility. See [parameters, server contract and validation
+limits](docs/skintokens-rigging.md) and `examples/rig_glb_skintokens.json`.
+
 ## Requirements
 
 - Python + [`uv`](https://docs.astral.sh/uv/)

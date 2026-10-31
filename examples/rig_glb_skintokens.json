@@ -1,0 +1,14 @@
+{
+  "1": {
+    "class_type": "SkinTokensRigGLB",
+    "inputs": {
+      "glb_path": "input.glb",
+      "output_name": "input.glb",
+      "use_skeleton": false,
+      "use_transfer": true,
+      "use_postprocess": false,
+      "num_beams": 10
+    },
+    "_meta": {"title": "SkinTokens rigged GLB (experimental)"}
+  }
+}
