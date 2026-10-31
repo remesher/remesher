@@ -35,10 +35,23 @@ def test_skintokens_rig_dispatch(tmp_path, monkeypatch, beams):
     assert captured["extensions"] == {".glb"}
 
 
+@pytest.fixture
+def wide_plain_cli(monkeypatch):
+    # TERM=dumb makes Rich force an 80-column layout even with COLUMNS set,
+    # truncating flags and wrapping error messages. Use a fixed-width, unstyled
+    # renderer for literal content assertions, without changing CLI behavior.
+    import typer.rich_utils
+
+    monkeypatch.setenv("TERM", "xterm")
+    monkeypatch.setattr(typer.rich_utils, "MAX_WIDTH", 160)
+    monkeypatch.setattr(typer.rich_utils, "COLOR_SYSTEM", None)
+    return CliRunner()
+
+
 @pytest.mark.parametrize("command,args", [("rig-glb", []), ("text-to-rigged-glb", ["--prompt", "robot"])])
-def test_backend_help_and_invalid_value(command, args):
-    runner = CliRunner()
-    help_result = runner.invoke(cli.app, [command, "--help"], env={"COLUMNS": "160"})
+def test_backend_help_and_invalid_value(command, args, wide_plain_cli):
+    runner = wide_plain_cli
+    help_result = runner.invoke(cli.app, [command, "--help"])
     assert help_result.exit_code == 0
     assert "--rigging-backend" in help_result.output
     assert "--rig-seed" not in help_result.output
@@ -132,7 +145,7 @@ def test_example_matches_generated_workflow():
 
 
 @pytest.mark.parametrize("output_mode", ["files", "missing", "error"])
-def test_skintokens_http_download_contract(tmp_path, output_mode):
+def test_skintokens_http_download_contract(tmp_path, output_mode, wide_plain_cli):
     """Exercise the real CLI HTTP path against a local protocol fixture, not inference."""
     import threading
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -172,7 +185,7 @@ def test_skintokens_http_download_contract(tmp_path, output_mode):
     config = tmp_path / "config.json"
     config.write_text(json.dumps({"server_url": f"http://127.0.0.1:{server.server_port}"}))
     try:
-        result = CliRunner().invoke(cli.app, ["rig-glb", "--rigging-backend", "skintokens", "--workflow-file", str(ROOT / "examples/rig_glb_skintokens.json"), "--mesh", "remote/robot.glb", "--config", str(config), "--out-dir", str(tmp_path), "--timeout", "3", "--poll-interval", "0.5"], env={"COLUMNS": "160"})
+        result = wide_plain_cli.invoke(cli.app, ["rig-glb", "--rigging-backend", "skintokens", "--workflow-file", str(ROOT / "examples/rig_glb_skintokens.json"), "--mesh", "remote/robot.glb", "--config", str(config), "--out-dir", str(tmp_path), "--timeout", "3", "--poll-interval", "0.5"])
         if output_mode != "files":
             assert result.exit_code == 2, result.output
             assert ("fixture inference failure" if output_mode == "error" else ".glb") in result.output
