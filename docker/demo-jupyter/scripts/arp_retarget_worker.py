@@ -81,6 +81,15 @@ def _remove_non_target_actions(bpy, target_action) -> list[str]:
     return removed
 
 
+def _validate_target_bones(bone_names: set[str]) -> None:
+    if "mixamorig:Hips" not in bone_names:
+        raise ValueError(
+            "Automatic Mixamo retargeting requires a Mixamo-named target skeleton. "
+            "Generic SkinTokens bones are unsupported without an explicit, validated "
+            "semantic bone mapping; renaming bones by index is not a valid mapping."
+        )
+
+
 def _find_target_armature(bpy):
     armatures = [obj for obj in bpy.context.scene.objects if obj.type == "ARMATURE"]
     if len(armatures) != 1:
@@ -152,6 +161,7 @@ def retarget_mixamo_to_glb(
 
     bpy.ops.import_scene.gltf(filepath=str(rigged_glb))
     target = _find_target_armature(bpy)
+    _validate_target_bones({bone.name for bone in target.data.bones})
     result["target_armature"] = target.name
     result["target_scale"] = list(target.scale)
     result["target_bone_count"] = len(target.data.bones)
